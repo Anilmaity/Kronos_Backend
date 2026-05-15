@@ -27,7 +27,7 @@ class ChangeStrategyStatus(graphene.Mutation):
                 userstrategy = UserStrategy.objects.get(
                     user_broker__user=info.context.user, id=user_strategy_id
                 )
-            userstrategy.active = status
+            userstrategy.is_active = status
             userstrategy.save()
             return ChangeStrategyStatus(Response="Success", UserStrategy=userstrategy)
         except UserStrategy.DoesNotExist:

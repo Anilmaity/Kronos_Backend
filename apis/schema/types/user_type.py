@@ -47,7 +47,7 @@ class UserType(DjangoObjectType):
 
     class Meta:
         model = User
-        exclude = ("userbroker_set", "backtestreport_set", "password", "email", "username")
+        exclude = ("userbroker_set", "password", "email", "username")
 
     def resolve_userstrategys(self, info):
         return UserStrategy.objects.filter(user_broker__user=self).order_by("-created_at")

@@ -132,6 +132,4 @@ class UserBrokerType(DjangoObjectType):
 
     class Meta:
         model = UserBroker
-        exclude = (
-             "user", "userstrategy_set", "userbrokerposition_set",
-            "order_set", "trigger_set")
+        exclude = ("user", "userstrategy_set", "order_set")

@@ -71,7 +71,6 @@ class StrategyType(DjangoObjectType):
             "json_data",
             "signal_set",
             "userstrategy_set",
-            "backtestreport_set",
             "action_set",
         )
 
