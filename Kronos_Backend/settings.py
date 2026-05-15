@@ -128,11 +128,11 @@ ASGI_APPLICATION = 'Kronos_Backend.asgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': os.getenv('NAME', 'Kronos'),
+        'NAME': os.getenv('DB_NAME', 'Kronos'),
         'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('PASSWORD', 'kronos123'),
-        'HOST': os.getenv('HOST', '127.0.0.1'),
-        'PORT': os.getenv('PORT', '5432'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'kronos123'),
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
 
