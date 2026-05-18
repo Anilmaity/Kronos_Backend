@@ -275,3 +275,31 @@ class Trigger(BaseModel):
         return str(self.symbol) + " " + str(self.date)
 
 
+class BacktestReport(BaseModel):
+    strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="backtest_reports")
+    run_label = models.CharField(max_length=200)
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+    trades = models.IntegerField(default=0)
+    wins = models.IntegerField(default=0)
+    losses = models.IntegerField(default=0)
+    win_rate_pct = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True)
+    pnl_pts = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    max_dd_pts = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    avg_win_pts = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    avg_loss_pts = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    profit_factor = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    expectancy_pts = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    sharpe_daily = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    source_csv = models.CharField(max_length=500, blank=True, default="")
+    params_snapshot = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["strategy"]),
+            models.Index(fields=["run_label"]),
+        ]
+
+    def __str__(self):
+        return f"{self.run_label}:{self.strategy_id}"
