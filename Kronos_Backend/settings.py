@@ -125,16 +125,30 @@ TEMPLATES = [
 
 ASGI_APPLICATION = 'Kronos_Backend.asgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': os.getenv('DB_NAME', 'Kronos'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'kronos123'),
-        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
-        'PORT': os.getenv('DB_PORT', '5432'),
+import sys as _sys
+_RUNNING_TESTS = 'test' in _sys.argv
+
+if _RUNNING_TESTS:
+    # Use SQLite for tests — TigerData Cloud Postgres restricts test_* DB
+    # names so Django's "CREATE DATABASE test_tsdb" fails. SQLite gives a
+    # throwaway DB the test runner can create and drop freely.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql_psycopg2',
+            'NAME': os.getenv('DB_NAME', 'Kronos'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', 'kronos123'),
+            'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
+    }
 
 # TimescaleDB tick store (ltp hypertable). Parsed from TIGERDATA_URL.
 # Example: postgres://user:pass@host:port/db?sslmode=require
