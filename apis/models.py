@@ -275,6 +275,44 @@ class Trigger(BaseModel):
         return str(self.symbol) + " " + str(self.date)
 
 
+class StrategySignal(BaseModel):
+    STATUS_CHOICES = (
+        ("FIRED", "FIRED"),
+        ("PLACED", "PLACED"),
+        ("REJECTED", "REJECTED"),
+    )
+
+    strategy = models.ForeignKey(
+        Strategy, on_delete=models.CASCADE, related_name="strategy_signals"
+    )
+    symbol = models.CharField(max_length=50)
+    side = models.CharField(max_length=10)
+    entry_price = models.DecimalField(max_digits=25, decimal_places=5)
+    stop_loss = models.DecimalField(max_digits=25, decimal_places=5, null=True, blank=True)
+    take_profit = models.DecimalField(max_digits=25, decimal_places=5, null=True, blank=True)
+    reason = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="FIRED")
+    rejection_reason = models.CharField(max_length=500, blank=True, default="")
+    position = models.ForeignKey(
+        "Position",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="strategy_signals",
+    )
+    signal_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["strategy"]),
+            models.Index(fields=["signal_at"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol}:{self.side}@{self.entry_price}:{self.status}"
+
+
 class BacktestReport(BaseModel):
     strategy = models.ForeignKey(Strategy, on_delete=models.CASCADE, related_name="backtest_reports")
     run_label = models.CharField(max_length=200)

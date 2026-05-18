@@ -25,6 +25,7 @@ from apis.models import (
     CurrencyPair,
     Position,
     Strategy,
+    StrategySignal,
     User,
     UserBroker,
     UserStrategy,
@@ -231,3 +232,66 @@ class ContractSizeScalingTests(TestCase):
             ),
             0,
         )
+
+
+class StrategySignalModelTests(TestCase):
+    def test_create_fired_and_transition_to_placed(self):
+        us = _mk_user_strategy()
+        sig = StrategySignal.objects.create(
+            strategy=us.strategy,
+            symbol="XAU_USD",
+            side="BUY",
+            entry_price=Decimal("4500.00"),
+            stop_loss=Decimal("4497.00"),
+            take_profit=Decimal("4503.00"),
+            reason="UNIT_TEST",
+        )
+        self.assertEqual(sig.status, "FIRED")  # default
+
+        # Simulate a successful place_entry hooking up the position.
+        pos = _mk_position(us, qty="0.01", avg="4500", ltp_override="4500")
+        sig.status = "PLACED"
+        sig.position = pos
+        sig.save()
+
+        sig.refresh_from_db()
+        self.assertEqual(sig.status, "PLACED")
+        self.assertEqual(sig.position_id, pos.id)
+
+    def test_rejected_keeps_reason(self):
+        us = _mk_user_strategy()
+        sig = StrategySignal.objects.create(
+            strategy=us.strategy,
+            symbol="XAU_USD",
+            side="SELL",
+            entry_price=Decimal("4500.00"),
+            reason="UNIT_TEST",
+            status="REJECTED",
+            rejection_reason="open_position_cap",
+        )
+        fetched = StrategySignal.objects.get(pk=sig.pk)
+        self.assertEqual(fetched.status, "REJECTED")
+        self.assertEqual(fetched.rejection_reason, "open_position_cap")
+        self.assertIsNone(fetched.position_id)
+
+    def test_cascade_delete_with_strategy(self):
+        us = _mk_user_strategy()
+        StrategySignal.objects.create(
+            strategy=us.strategy, symbol="XAU_USD", side="BUY",
+            entry_price=Decimal("4500"),
+        )
+        self.assertEqual(StrategySignal.objects.count(), 1)
+        us.strategy.delete()
+        self.assertEqual(StrategySignal.objects.count(), 0)
+
+    def test_position_delete_nulls_link_but_keeps_signal(self):
+        us = _mk_user_strategy()
+        pos = _mk_position(us, qty="0.01", avg="4500", ltp_override="4500")
+        sig = StrategySignal.objects.create(
+            strategy=us.strategy, symbol="XAU_USD", side="BUY",
+            entry_price=Decimal("4500"), status="PLACED", position=pos,
+        )
+        pos.delete()
+        sig.refresh_from_db()
+        self.assertIsNone(sig.position_id)
+        self.assertEqual(sig.status, "PLACED")  # status unchanged
