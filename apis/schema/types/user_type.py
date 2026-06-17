@@ -114,11 +114,15 @@ class UserType(DjangoObjectType):
         for position in unique_positions:
             position.profit_loss = round(position.profit_loss, 2)
             position.avg_buy_price = round(position.avg_buy_price, 2)
-            position.avg_sell_price = round(
-                position.avg_buy_price
-                + position.profit_loss / position.total_buy_quantity,
-                2,
+            # avg_sell_price is the effective per-unit exit (entry + pnl/qty). For
+            # SHORT positions total_buy_quantity is 0 (nothing was bought), which
+            # raised decimal DivisionUndefined; guard it and fall back to the entry.
+            per_unit = (
+                position.profit_loss / position.total_buy_quantity
+                if position.total_buy_quantity
+                else 0
             )
+            position.avg_sell_price = round(position.avg_buy_price + per_unit, 2)
 
         return unique_positions
 
