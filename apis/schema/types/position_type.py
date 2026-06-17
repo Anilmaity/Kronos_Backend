@@ -7,6 +7,7 @@ from graphene_django import DjangoObjectType
 from apis.models import (Position)
 from apis.schema.types.order_type import OrderType
 from apis.schema.types.trigger_type import TriggerType
+from apis.schema.types.pnl import position_pnl, position_notional, position_pnl_pct
 
 
 ##############################################################################################################################################################
@@ -31,13 +32,19 @@ class PositionType(DjangoObjectType):
 
 
     def resolve_totalValue(self, info):
-        return self.avg_buy_price * self.quantity *100
+        # Notional at entry — use whichever side was opened (long: avg_buy_price,
+        # short: avg_sell_price). Long-only `avg_buy_price * qty` showed 0 for shorts.
+        return position_notional(self.quantity, self.avg_buy_price, self.avg_sell_price)
 
     def resolve_profit_loss(self, info):
-        return round((float(self.realized_profit_loss) + (float(self.currencypair.ltp) - float(self.avg_buy_price))* float(self.quantity))*100,2)
+        # Directional realized + unrealized PnL. The old long-only formula priced a
+        # short against avg_buy_price == 0, inflating PnL to ~ the entry price ("4K").
+        return position_pnl(self.realized_profit_loss, self.currencypair.ltp,
+                            self.quantity, self.avg_buy_price, self.avg_sell_price)
 
     def resolve_profit_loss_percentage(self, info):
-        return round(float(self.realized_profit_loss) + (float(self.currencypair.ltp) - float(self.avg_buy_price))* float(self.quantity),2) / (float(self.avg_buy_price) * float(self.quantity)) * 100
+        return position_pnl_pct(self.realized_profit_loss, self.currencypair.ltp,
+                                self.quantity, self.avg_buy_price, self.avg_sell_price)
 
 
     def resolve_Orders(

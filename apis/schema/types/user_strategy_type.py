@@ -9,6 +9,7 @@ from pytz import timezone
 
 from apis.models import (UserStrategy)
 from apis.schema.types.position_type import PositionType
+from apis.schema.types.pnl import position_pnl
 
 kolkata = timezone("Asia/Kolkata")
 
@@ -57,18 +58,14 @@ class UserStrategyType(DjangoObjectType):
         return qs.count()
 
     def resolve_total_profit_loss(self, info, date="", userstrategy_ids=[]):
-        # Match the per-position formula in PositionType.resolve_profit_loss
-        # so the strategy total agrees with the row-level numbers.
-        # The *100 is XAU contract size (1 lot = 100 oz). When the platform
-        # adds non-gold instruments, move this multiplier onto CurrencyPair.
+        # Sum the SAME per-position formula used by PositionType.resolve_profit_loss
+        # (apis.schema.types.pnl.position_pnl) so the strategy total agrees with the
+        # row-level numbers and is directional — a short is no longer priced against
+        # avg_buy_price == 0 (the "4K" inflation bug).
         positions = _positions_qs(self, date, userstrategy_ids)
         return sum(
-            (
-                float(p.realized_profit_loss)
-                + (float(p.currencypair.ltp) - float(p.avg_buy_price))
-                * float(p.quantity)
-            )
-            * 100
+            position_pnl(p.realized_profit_loss, p.currencypair.ltp,
+                         p.quantity, p.avg_buy_price, p.avg_sell_price)
             for p in positions
         )
 
