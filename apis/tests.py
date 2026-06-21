@@ -295,3 +295,58 @@ class StrategySignalModelTests(TestCase):
         sig.refresh_from_db()
         self.assertIsNone(sig.position_id)
         self.assertEqual(sig.status, "PLACED")  # status unchanged
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# ExitStrategy helpers — truthful success/failure (2026-06-21)
+# ───────────────────────────────────────────────────────────────────────────────
+
+from unittest.mock import MagicMock
+import requests as _requests
+
+from apis.schema.mutation.user.exit_strategy import (
+    request_position_exits,
+    build_exit_message,
+)
+
+
+class ExitStrategyHelperTests(TestCase):
+    @staticmethod
+    def _pos(pid="p1"):
+        m = MagicMock()
+        m.id = pid
+        return m
+
+    def test_all_confirmed(self):
+        ok_resp = MagicMock()
+        ok_resp.raise_for_status.return_value = None
+        post = MagicMock(return_value=ok_resp)
+        confirmed, pending, failed = request_position_exits(
+            [self._pos(), self._pos()], post=post
+        )
+        self.assertEqual((confirmed, pending, failed), (2, 0, 0))
+        self.assertEqual(post.call_count, 2)
+
+    def test_timeout_is_pending_not_confirmed(self):
+        post = MagicMock(side_effect=_requests.exceptions.Timeout())
+        confirmed, pending, failed = request_position_exits([self._pos()], post=post)
+        self.assertEqual((confirmed, pending, failed), (0, 1, 0))
+
+    def test_connection_error_is_failed(self):
+        post = MagicMock(side_effect=_requests.exceptions.ConnectionError())
+        confirmed, pending, failed = request_position_exits([self._pos()], post=post)
+        self.assertEqual((confirmed, pending, failed), (0, 0, 1))
+
+    def test_http_error_is_failed(self):
+        bad_resp = MagicMock()
+        bad_resp.raise_for_status.side_effect = _requests.exceptions.HTTPError()
+        post = MagicMock(return_value=bad_resp)
+        confirmed, pending, failed = request_position_exits([self._pos()], post=post)
+        self.assertEqual((confirmed, pending, failed), (0, 0, 1))
+
+    def test_message_includes_pending_and_failed(self):
+        self.assertEqual(build_exit_message(1, 0, 0), "Exit requested: 1 exited")
+        msg = build_exit_message(1, 2, 3)
+        self.assertIn("1 exited", msg)
+        self.assertIn("2 pending confirmation", msg)
+        self.assertIn("3 failed", msg)
