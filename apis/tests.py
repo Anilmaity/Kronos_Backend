@@ -350,3 +350,40 @@ class ExitStrategyHelperTests(TestCase):
         self.assertIn("1 exited", msg)
         self.assertIn("2 pending confirmation", msg)
         self.assertIn("3 failed", msg)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# SetUserStrategyMultiplier — contract pinned for the FE fix (2026-06-21)
+# ───────────────────────────────────────────────────────────────────────────────
+
+from types import SimpleNamespace
+
+from apis.schema.mutation.user.set_user_strategy_multiplier import (
+    SetUserStrategyMultiplier,
+)
+
+
+class SetMultiplierTests(TestCase):
+    @staticmethod
+    def _info(user):
+        return SimpleNamespace(context=SimpleNamespace(user=user))
+
+    def test_sets_multiplier(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = SetUserStrategyMultiplier.mutate(
+            None, self._info(user), user_strategy_id=str(us.id), multiplier=5
+        )
+        us.refresh_from_db()
+        self.assertEqual(us.multiplyer, 5)
+        self.assertEqual(res.Response, "Success")
+
+    def test_rejects_below_one(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = SetUserStrategyMultiplier.mutate(
+            None, self._info(user), user_strategy_id=str(us.id), multiplier=0
+        )
+        self.assertIn("Multiplier must be", res.Response)
+        us.refresh_from_db()
+        self.assertEqual(us.multiplyer, 1)  # unchanged
