@@ -447,3 +447,26 @@ class UserBrokerCredentialFieldTests(TestCase):
         self.assertEqual(fetched.meta_account_id, "")
         self.assertEqual(fetched.meta_api_token_enc, "")
         self.assertEqual(fetched.meta_api_token_last4, "")
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# UserBrokerType schema — token ciphertext hidden; hasToken flag exposed (2026-06-22)
+# ───────────────────────────────────────────────────────────────────────────────
+
+from apis.schema.types.user_broker_type import UserBrokerType as _UBType
+
+
+class UserBrokerTypeTests(TestCase):
+    def test_has_token_reflects_presence(self):
+        us = _mk_user_strategy()
+        broker = us.user_broker
+        broker.meta_api_token_enc = ""
+        self.assertFalse(_UBType.resolve_hasToken(broker, None))
+        broker.meta_api_token_enc = "cipher"
+        self.assertTrue(_UBType.resolve_hasToken(broker, None))
+
+    def test_ciphertext_field_not_in_schema(self):
+        field_names = set(_UBType._meta.fields.keys())
+        self.assertNotIn("metaApiTokenEnc", field_names)
+        self.assertNotIn("meta_api_token_enc", field_names)
+        self.assertIn("hasToken", field_names)

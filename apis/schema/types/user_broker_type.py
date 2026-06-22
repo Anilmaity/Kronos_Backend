@@ -79,9 +79,13 @@ class UserBrokerType(DjangoObjectType):
         return (self.margin_available)
 
     name = graphene.String()
+    hasToken = graphene.Boolean()
 
     def resolve_name(self, info):
         return _broker_holder_name(self)
+
+    def resolve_hasToken(self, info):
+        return bool(self.meta_api_token_enc)
 
     def resolve_accountHolderName(self, info):
         return _broker_holder_name(self)
@@ -150,4 +154,4 @@ class UserBrokerType(DjangoObjectType):
 
     class Meta:
         model = UserBroker
-        exclude = ("user", "userstrategy_set", "order_set")
+        exclude = ("user", "userstrategy_set", "order_set", "meta_api_token_enc")
