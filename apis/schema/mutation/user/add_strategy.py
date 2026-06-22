@@ -1,11 +1,6 @@
-
-import graphql_jwt
-
 import graphene
 
-from graphql_jwt.shortcuts import get_token
-
-from apis.models import UserStrategy , Strategy, UserBroker
+from apis.models import UserStrategy, Strategy, UserBroker
 from apis.schema.utils import user_authenticate
 from apis.schema.types.user_strategy_type import UserStrategyType
 
@@ -22,24 +17,34 @@ class AddStrategy(graphene.Mutation):
     @user_authenticate
     def mutate(self, info, strategy_id, user_broker_id, quantity=1):
         try:
-            userstrategy = UserStrategy.objects.get(
-                user_broker_id=user_broker_id, strategy_id=strategy_id
-            )
-            return AddStrategy(UserStrategy=userstrategy, Response="Strategy Already Exists")
-        except UserStrategy.DoesNotExist:
-            try:
-                strategy = Strategy.objects.get(id=strategy_id)
+            if info.context.user.is_superuser:
                 userbroker = UserBroker.objects.get(id=user_broker_id)
-                userstrategy = UserStrategy.objects.create(
-                    user_broker=userbroker,
-                    strategy=strategy,
-                    name=(strategy.name),
-                    multiplyer=quantity,
-                    broker_name=userbroker.broker.name,
+            else:
+                userbroker = UserBroker.objects.get(
+                    id=user_broker_id, user=info.context.user
                 )
+        except UserBroker.DoesNotExist:
+            return AddStrategy(UserStrategy=None, Response="Account does not exist")
 
-                return AddStrategy(UserStrategy=userstrategy, Response="Success")
-            except (UserBroker.DoesNotExist, Strategy.DoesNotExist):
-                return AddStrategy(
-                    UserStrategy=None, Response="Broker or Strategy Does Not Exist"
-                )
+        try:
+            strategy = Strategy.objects.get(id=strategy_id)
+        except Strategy.DoesNotExist:
+            return AddStrategy(UserStrategy=None, Response="Strategy does not exist")
+
+        existing = UserStrategy.objects.filter(
+            user_broker=userbroker, strategy=strategy
+        ).first()
+        if existing:
+            return AddStrategy(
+                UserStrategy=existing, Response="Strategy Already Exists"
+            )
+
+        userstrategy = UserStrategy.objects.create(
+            user_broker=userbroker,
+            strategy=strategy,
+            name=strategy.name,
+            multiplyer=quantity,
+            is_active=True,
+            deployed=True,
+        )
+        return AddStrategy(UserStrategy=userstrategy, Response="Success")

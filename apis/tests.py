@@ -597,6 +597,85 @@ class UpdateAccountTests(TestCase):
         self.assertIsNone(res.UserBroker)
 
 
+# ───────────────────────────────────────────────────────────────────────────────
+# AddStrategy deploy mutation (2026-06-22, Sub-project B)
+# ───────────────────────────────────────────────────────────────────────────────
+
+class AddStrategyDeployTests(TestCase):
+    @staticmethod
+    def _info(user):
+        from types import SimpleNamespace
+        return SimpleNamespace(context=SimpleNamespace(user=user))
+
+    def _fresh_strategy(self):
+        cp, _ = CurrencyPair.objects.get_or_create(
+            symbol="XAU_USD", defaults={"name": "XAU_USD", "ltp": "4540.00"}
+        )
+        return Strategy.objects.create(
+            name=f"Mkt {uuid.uuid4()}", currencypair=cp, is_active=True
+        )
+
+    def test_deploy_creates_live_userstrategy(self):
+        from apis.schema.mutation.user.add_strategy import AddStrategy
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        broker = us.user_broker
+        strat = self._fresh_strategy()
+        res = AddStrategy.mutate(
+            None, self._info(user),
+            strategy_id=str(strat.id), user_broker_id=str(broker.id), quantity=3,
+        )
+        self.assertEqual(res.Response, "Success")
+        link = UserStrategy.objects.get(user_broker=broker, strategy=strat)
+        self.assertTrue(link.deployed)
+        self.assertTrue(link.is_active)
+        self.assertEqual(link.multiplyer, 3)
+
+    def test_duplicate_returns_already_exists(self):
+        from apis.schema.mutation.user.add_strategy import AddStrategy
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        broker = us.user_broker
+        strat = self._fresh_strategy()
+        AddStrategy.mutate(
+            None, self._info(user),
+            strategy_id=str(strat.id), user_broker_id=str(broker.id),
+        )
+        res = AddStrategy.mutate(
+            None, self._info(user),
+            strategy_id=str(strat.id), user_broker_id=str(broker.id),
+        )
+        self.assertIn("Already Exists", res.Response)
+        self.assertEqual(
+            UserStrategy.objects.filter(user_broker=broker, strategy=strat).count(), 1
+        )
+
+    def test_non_owner_account_rejected(self):
+        from apis.schema.mutation.user.add_strategy import AddStrategy
+        owner_us = _mk_user_strategy()
+        broker = owner_us.user_broker
+        other = _mk_user_strategy().user_broker.user
+        strat = self._fresh_strategy()
+        res = AddStrategy.mutate(
+            None, self._info(other),
+            strategy_id=str(strat.id), user_broker_id=str(broker.id),
+        )
+        self.assertIn("does not exist", res.Response)
+        self.assertFalse(
+            UserStrategy.objects.filter(user_broker=broker, strategy=strat).exists()
+        )
+
+    def test_missing_strategy(self):
+        from apis.schema.mutation.user.add_strategy import AddStrategy
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = AddStrategy.mutate(
+            None, self._info(user),
+            strategy_id=str(uuid.uuid4()), user_broker_id=str(us.user_broker.id),
+        )
+        self.assertIn("Strategy does not exist", res.Response)
+
+
 class DeleteUserBrokerScopeTests(TestCase):
     @staticmethod
     def _info(user):
