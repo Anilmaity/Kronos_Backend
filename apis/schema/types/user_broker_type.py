@@ -46,7 +46,7 @@ class UserBrokerType(DjangoObjectType):
     label = graphene.String()
 
     def resolve_label(self, info):
-        return self.unique_code
+        return self.label
 
 
 

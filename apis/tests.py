@@ -470,3 +470,9 @@ class UserBrokerTypeTests(TestCase):
         self.assertNotIn("metaApiTokenEnc", field_names)
         self.assertNotIn("meta_api_token_enc", field_names)
         self.assertIn("hasToken", field_names)
+
+    def test_label_resolves_to_model_field(self):
+        us = _mk_user_strategy()
+        broker = us.user_broker
+        broker.label = "My Live Account"
+        self.assertEqual(_UBType.resolve_label(broker, None), "My Live Account")
