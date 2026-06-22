@@ -21,6 +21,16 @@ kolkata = timezone("Asia/Kolkata")
 
 
 
+def _broker_holder_name(broker):
+    """Display name for a UserBroker: the owning user's full name, else
+    username, else email. Returns "" when no user is attached."""
+    u = getattr(broker, "user", None)
+    if not u:
+        return ""
+    full = f"{(u.first_name or '').strip()} {(u.last_name or '').strip()}".strip()
+    return full or (u.username or "") or (u.email or "")
+
+
 class UserBrokerType(DjangoObjectType):
     """ "Get daily, weekly and"""
 
@@ -67,6 +77,14 @@ class UserBrokerType(DjangoObjectType):
 
     def resolve_marginAvailable(self, info):
         return (self.margin_available)
+
+    name = graphene.String()
+
+    def resolve_name(self, info):
+        return _broker_holder_name(self)
+
+    def resolve_accountHolderName(self, info):
+        return _broker_holder_name(self)
 
 
     def resolve_strategy_positions(self, info):
