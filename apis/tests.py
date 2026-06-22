@@ -476,3 +476,47 @@ class UserBrokerTypeTests(TestCase):
         broker = us.user_broker
         broker.label = "My Live Account"
         self.assertEqual(_UBType.resolve_label(broker, None), "My Live Account")
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# AddAccount mutation (2026-06-22)
+# ───────────────────────────────────────────────────────────────────────────────
+
+class AddAccountTests(TestCase):
+    @staticmethod
+    def _info(user):
+        from types import SimpleNamespace
+        return SimpleNamespace(context=SimpleNamespace(user=user))
+
+    def setUp(self):
+        os.environ["FIELD_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+
+    def test_creates_encrypted_account(self):
+        from apis.schema.mutation.user.add_account import AddAccount
+        from apis.crypto import decrypt_token
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = AddAccount.mutate(
+            None, self._info(user),
+            label="Live A", meta_account_id="acct-1", meta_api_token="tok-ABCD1234",
+        )
+        self.assertEqual(res.Response, "Success")
+        b = res.UserBroker
+        self.assertEqual(b.label, "Live A")
+        self.assertEqual(b.meta_account_id, "acct-1")
+        self.assertEqual(b.meta_api_token_last4, "1234")
+        self.assertNotEqual(b.meta_api_token_enc, "tok-ABCD1234")
+        self.assertEqual(decrypt_token(b.meta_api_token_enc), "tok-ABCD1234")
+        self.assertEqual(b.user_id, user.id)
+
+    def test_missing_key_is_handled(self):
+        from apis.schema.mutation.user.add_account import AddAccount
+        os.environ.pop("FIELD_ENCRYPTION_KEY", None)
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = AddAccount.mutate(
+            None, self._info(user),
+            label="X", meta_account_id="y", meta_api_token="z",
+        )
+        self.assertIn("encryption key", res.Response)
+        self.assertIsNone(res.UserBroker)
