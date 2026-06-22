@@ -98,6 +98,11 @@ class UserBroker(BaseModel):
     margin_used = models.CharField(max_length=100, default="0.00")
     status = models.CharField(max_length=100, default="ACTIVE")
 
+    label = models.CharField(max_length=120, default="")
+    meta_account_id = models.CharField(max_length=120, default="")
+    meta_api_token_enc = models.TextField(default="")
+    meta_api_token_last4 = models.CharField(max_length=4, default="")
+
     is_active = models.BooleanField(default=True)
     last_updated = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)

@@ -417,3 +417,23 @@ class CryptoTests(TestCase):
         from apis.crypto import encrypt_token
         with self.assertRaises(RuntimeError):
             encrypt_token("x")
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# UserBroker credential fields (2026-06-22)
+# ───────────────────────────────────────────────────────────────────────────────
+
+class UserBrokerCredentialFieldTests(TestCase):
+    def test_fields_exist_with_defaults(self):
+        us = _mk_user_strategy()
+        broker = us.user_broker
+        broker.label = "Primary Live"
+        broker.meta_account_id = "acct-uuid-1"
+        broker.meta_api_token_enc = "cipher"
+        broker.meta_api_token_last4 = "1234"
+        broker.save()
+        broker.refresh_from_db()
+        self.assertEqual(broker.label, "Primary Live")
+        self.assertEqual(broker.meta_account_id, "acct-uuid-1")
+        self.assertEqual(broker.meta_api_token_enc, "cipher")
+        self.assertEqual(broker.meta_api_token_last4, "1234")
