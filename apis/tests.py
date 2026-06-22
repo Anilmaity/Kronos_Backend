@@ -521,6 +521,24 @@ class AddAccountTests(TestCase):
         self.assertIn("encryption key", res.Response)
         self.assertIsNone(res.UserBroker)
 
+    def test_two_accounts_get_distinct_api_keys(self):
+        # Regression: the model's api_key default is a broken static string, so a
+        # second AddAccount without an explicit api_key would hit the unique
+        # constraint. Both creates must succeed with distinct api_keys.
+        from apis.schema.mutation.user.add_account import AddAccount
+        user = _mk_user_strategy().user_broker.user
+        a = AddAccount.mutate(
+            None, self._info(user),
+            label="A", meta_account_id="a1", meta_api_token="tok-AAAA1111",
+        )
+        b = AddAccount.mutate(
+            None, self._info(user),
+            label="B", meta_account_id="b1", meta_api_token="tok-BBBB2222",
+        )
+        self.assertEqual(a.Response, "Success")
+        self.assertEqual(b.Response, "Success")
+        self.assertNotEqual(a.UserBroker.api_key, b.UserBroker.api_key)
+
 
 # ───────────────────────────────────────────────────────────────────────────────
 # UpdateAccount mutation (2026-06-22)

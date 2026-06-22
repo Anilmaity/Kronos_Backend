@@ -1,3 +1,5 @@
+import uuid
+
 import graphene
 
 from apis.models import UserBroker
@@ -25,6 +27,10 @@ class AddAccount(graphene.Mutation):
             )
         broker = UserBroker.objects.create(
             user=info.context.user,
+            # Explicit unique api_key: the model's default is a broken static
+            # string (str(uuid.uuid4) evaluated at class-load), so every create
+            # without an explicit value would collide on the unique constraint.
+            api_key=str(uuid.uuid4()),
             label=label,
             meta_account_id=meta_account_id,
             meta_api_token_enc=enc,
