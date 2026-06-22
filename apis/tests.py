@@ -387,3 +387,33 @@ class SetMultiplierTests(TestCase):
         self.assertIn("Multiplier must be", res.Response)
         us.refresh_from_db()
         self.assertEqual(us.multiplyer, 1)  # unchanged
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Accounts: credential crypto (2026-06-22)
+# ───────────────────────────────────────────────────────────────────────────────
+
+import os
+from cryptography.fernet import Fernet
+
+
+class CryptoTests(TestCase):
+    def setUp(self):
+        os.environ["FIELD_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+
+    def test_round_trip(self):
+        from apis.crypto import encrypt_token, decrypt_token
+        cipher = encrypt_token("super-secret-token-1234")
+        self.assertNotEqual(cipher, "super-secret-token-1234")
+        self.assertEqual(decrypt_token(cipher), "super-secret-token-1234")
+
+    def test_empty_passthrough(self):
+        from apis.crypto import encrypt_token, decrypt_token
+        self.assertEqual(encrypt_token(""), "")
+        self.assertEqual(decrypt_token(""), "")
+
+    def test_missing_key_raises(self):
+        os.environ.pop("FIELD_ENCRYPTION_KEY", None)
+        from apis.crypto import encrypt_token
+        with self.assertRaises(RuntimeError):
+            encrypt_token("x")

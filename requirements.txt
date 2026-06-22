@@ -47,7 +47,7 @@ binance-futures-connector
 #layers
 #requests==2.31.0
 #psycopg2-binary==2.9.3
-#cryptography==42.0.5
+cryptography==42.0.5
 #bcrypt==3.2.2
 #pycryptodome==3.20.0
 #python-binance==1.0.19
