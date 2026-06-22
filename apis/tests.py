@@ -424,7 +424,7 @@ class CryptoTests(TestCase):
 # ───────────────────────────────────────────────────────────────────────────────
 
 class UserBrokerCredentialFieldTests(TestCase):
-    def test_fields_exist_with_defaults(self):
+    def test_fields_persist_to_db(self):
         us = _mk_user_strategy()
         broker = us.user_broker
         broker.label = "Primary Live"
@@ -432,8 +432,18 @@ class UserBrokerCredentialFieldTests(TestCase):
         broker.meta_api_token_enc = "cipher"
         broker.meta_api_token_last4 = "1234"
         broker.save()
-        broker.refresh_from_db()
-        self.assertEqual(broker.label, "Primary Live")
-        self.assertEqual(broker.meta_account_id, "acct-uuid-1")
-        self.assertEqual(broker.meta_api_token_enc, "cipher")
-        self.assertEqual(broker.meta_api_token_last4, "1234")
+        # Fresh fetch (not refresh_from_db) so this actually exercises the DB
+        # columns — proving the fields persist, not just that the attrs were set.
+        fetched = UserBroker.objects.get(pk=broker.pk)
+        self.assertEqual(fetched.label, "Primary Live")
+        self.assertEqual(fetched.meta_account_id, "acct-uuid-1")
+        self.assertEqual(fetched.meta_api_token_enc, "cipher")
+        self.assertEqual(fetched.meta_api_token_last4, "1234")
+
+    def test_defaults_are_empty(self):
+        us = _mk_user_strategy()
+        fetched = UserBroker.objects.get(pk=us.user_broker.pk)
+        self.assertEqual(fetched.label, "")
+        self.assertEqual(fetched.meta_account_id, "")
+        self.assertEqual(fetched.meta_api_token_enc, "")
+        self.assertEqual(fetched.meta_api_token_last4, "")
