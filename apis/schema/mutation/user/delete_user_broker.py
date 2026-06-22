@@ -1,12 +1,8 @@
-
-import graphql_jwt
-
 import graphene
 
-from graphql_jwt.shortcuts import get_token
-
 from apis.models import UserBroker
-from apis.schema.utils import admin_authenticate
+from apis.schema.utils import user_authenticate
+
 
 class DeleteUserBroker(graphene.Mutation):
     Response = graphene.String()
@@ -14,10 +10,15 @@ class DeleteUserBroker(graphene.Mutation):
     class Arguments:
         broker_id = graphene.String(required=True)
 
-    @admin_authenticate
+    @user_authenticate
     def mutate(self, info, broker_id):
         try:
-            userbroker = UserBroker.objects.get(id=broker_id)
+            if info.context.user.is_superuser:
+                userbroker = UserBroker.objects.get(id=broker_id)
+            else:
+                userbroker = UserBroker.objects.get(
+                    id=broker_id, user=info.context.user
+                )
             userbroker.delete()
             return DeleteUserBroker(Response="Success")
         except UserBroker.DoesNotExist:

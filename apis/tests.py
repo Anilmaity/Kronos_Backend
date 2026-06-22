@@ -577,3 +577,31 @@ class UpdateAccountTests(TestCase):
         res = UpdateAccount.mutate(None, self._info(other), id=str(b.id), label="hax")
         self.assertIn("does not exist", res.Response)
         self.assertIsNone(res.UserBroker)
+
+
+class DeleteUserBrokerScopeTests(TestCase):
+    @staticmethod
+    def _info(user):
+        from types import SimpleNamespace
+        return SimpleNamespace(context=SimpleNamespace(user=user))
+
+    def test_owner_can_delete(self):
+        from apis.schema.mutation.user.delete_user_broker import DeleteUserBroker
+        from apis.models import UserBroker
+        us = _mk_user_strategy()
+        us.delete()
+        broker = us.user_broker
+        user = broker.user
+        res = DeleteUserBroker.mutate(None, self._info(user), broker_id=str(broker.id))
+        self.assertEqual(res.Response, 'Success')
+        self.assertFalse(UserBroker.objects.filter(id=broker.id).exists())
+
+    def test_non_owner_cannot_delete(self):
+        from apis.schema.mutation.user.delete_user_broker import DeleteUserBroker
+        from apis.models import UserBroker
+        owner_us = _mk_user_strategy()
+        broker = owner_us.user_broker
+        other = _mk_user_strategy().user_broker.user
+        res = DeleteUserBroker.mutate(None, self._info(other), broker_id=str(broker.id))
+        self.assertIn('Not Found', res.Response)
+        self.assertTrue(UserBroker.objects.filter(id=broker.id).exists())
