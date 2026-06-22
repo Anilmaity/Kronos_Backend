@@ -47,7 +47,7 @@ def _mk_user_strategy(symbol="XAU_USD", ltp="4540.00"):
         first_name="T",
         last_name="T",
     )
-    cp = CurrencyPair.objects.create(symbol=symbol, name=symbol, ltp=ltp)
+    cp, _ = CurrencyPair.objects.get_or_create(symbol=symbol, defaults={"name": symbol, "ltp": ltp})
     ub = UserBroker.objects.create(user=user, api_key=str(uuid.uuid4()))
     strat = Strategy.objects.create(
         name=f"Test {symbol} {uuid.uuid4()}",
@@ -519,4 +519,61 @@ class AddAccountTests(TestCase):
             label="X", meta_account_id="y", meta_api_token="z",
         )
         self.assertIn("encryption key", res.Response)
+        self.assertIsNone(res.UserBroker)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# UpdateAccount mutation (2026-06-22)
+# ───────────────────────────────────────────────────────────────────────────────
+
+class UpdateAccountTests(TestCase):
+    @staticmethod
+    def _info(user):
+        from types import SimpleNamespace
+        return SimpleNamespace(context=SimpleNamespace(user=user))
+
+    def setUp(self):
+        os.environ["FIELD_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+
+    def _make(self, user):
+        from apis.schema.mutation.user.add_account import AddAccount
+        return AddAccount.mutate(
+            None, self._info(user),
+            label="Orig", meta_account_id="acct-1", meta_api_token="tok-OLD9999",
+        ).UserBroker
+
+    def test_label_only_keeps_token(self):
+        from apis.schema.mutation.user.update_account import UpdateAccount
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        b = self._make(user)
+        old_enc = b.meta_api_token_enc
+        res = UpdateAccount.mutate(None, self._info(user), id=str(b.id), label="Renamed")
+        self.assertEqual(res.Response, "Success")
+        b.refresh_from_db()
+        self.assertEqual(b.label, "Renamed")
+        self.assertEqual(b.meta_api_token_enc, old_enc)
+        self.assertEqual(b.meta_api_token_last4, "9999")
+
+    def test_new_token_reencrypts(self):
+        from apis.schema.mutation.user.update_account import UpdateAccount
+        from apis.crypto import decrypt_token
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        b = self._make(user)
+        res = UpdateAccount.mutate(
+            None, self._info(user), id=str(b.id), meta_api_token="tok-NEW1111"
+        )
+        self.assertEqual(res.Response, "Success")
+        b.refresh_from_db()
+        self.assertEqual(b.meta_api_token_last4, "1111")
+        self.assertEqual(decrypt_token(b.meta_api_token_enc), "tok-NEW1111")
+
+    def test_other_users_account_not_found(self):
+        from apis.schema.mutation.user.update_account import UpdateAccount
+        owner = _mk_user_strategy().user_broker.user
+        b = self._make(owner)
+        other = _mk_user_strategy().user_broker.user
+        res = UpdateAccount.mutate(None, self._info(other), id=str(b.id), label="hax")
+        self.assertIn("does not exist", res.Response)
         self.assertIsNone(res.UserBroker)
