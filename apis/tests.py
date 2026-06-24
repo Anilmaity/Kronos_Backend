@@ -702,3 +702,46 @@ class DeleteUserBrokerScopeTests(TestCase):
         res = DeleteUserBroker.mutate(None, self._info(other), broker_id=str(broker.id))
         self.assertIn('Not Found', res.Response)
         self.assertTrue(UserBroker.objects.filter(id=broker.id).exists())
+
+
+class BackfillTgSignalsCommandTests(TestCase):
+    """The backfill_tg_signals management command turns historical telegram
+    copy-trade positions into StrategySignal rows so they show on the Signals tab."""
+
+    def _neymar_us(self):
+        us = _mk_user_strategy()
+        us.strategy.name = f"Neymar Telegram Copy {uuid.uuid4()}"
+        us.strategy.save()
+        return us
+
+    def test_creates_one_signal_per_position_and_is_idempotent(self):
+        from django.core.management import call_command
+
+        us = self._neymar_us()
+        _mk_position(us, qty="0.04", avg="4100.00")
+        _mk_position(us, qty="0.04", avg="4200.00")
+        # A non-telegram strategy's position must be ignored.
+        other = _mk_user_strategy()
+        _mk_position(other, qty="0.04", avg="3000.00")
+
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 0)
+        call_command("backfill_tg_signals", "--commit")
+
+        sigs = StrategySignal.objects.filter(strategy=us.strategy)
+        self.assertEqual(sigs.count(), 2)
+        self.assertTrue(all(s.status == "PLACED" for s in sigs))
+        self.assertTrue(all(s.position_id is not None for s in sigs))
+        # Unrelated strategy untouched.
+        self.assertEqual(StrategySignal.objects.filter(strategy=other.strategy).count(), 0)
+
+        # Re-running creates nothing (positions already linked).
+        call_command("backfill_tg_signals", "--commit")
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 2)
+
+    def test_dry_run_writes_nothing(self):
+        from django.core.management import call_command
+
+        us = self._neymar_us()
+        _mk_position(us, qty="0.04", avg="4100.00")
+        call_command("backfill_tg_signals")  # no --commit
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 0)
