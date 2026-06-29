@@ -148,9 +148,9 @@ class UserBrokerType(DjangoObjectType):
 
     def resolve_userstrategys(self, info, strategies=[]):
         if len(strategies) > 0:
-            return self.userstrategy_set.filter(strategy__in=strategies).order_by("-created_at")
+            return self.userstrategy_set.filter(strategy__in=strategies).exclude(archived=True).order_by("-created_at")
         else:
-            return self.userstrategy_set.all().order_by("-created_at")
+            return self.userstrategy_set.exclude(archived=True).order_by("-created_at")
 
     class Meta:
         model = UserBroker
