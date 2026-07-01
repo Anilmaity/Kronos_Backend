@@ -190,6 +190,7 @@ class UserStrategy(BaseModel):
     multiplyer = models.IntegerField(default=1)
     user_broker = models.ForeignKey(UserBroker, on_delete=models.CASCADE)
     deployed = models.BooleanField(default=False)
+    archived = models.BooleanField(default=False)
 
 
     def __str__(self):

@@ -50,7 +50,7 @@ class UserType(DjangoObjectType):
         exclude = ("userbroker_set", "password", "email", "username")
 
     def resolve_userstrategys(self, info):
-        return UserStrategy.objects.filter(user_broker__user=self).order_by("-created_at")
+        return UserStrategy.objects.filter(user_broker__user=self).exclude(archived=True).order_by("-created_at")
 
 
 

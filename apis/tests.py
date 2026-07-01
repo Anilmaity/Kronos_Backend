@@ -702,3 +702,128 @@ class DeleteUserBrokerScopeTests(TestCase):
         res = DeleteUserBroker.mutate(None, self._info(other), broker_id=str(broker.id))
         self.assertIn('Not Found', res.Response)
         self.assertTrue(UserBroker.objects.filter(id=broker.id).exists())
+
+
+class BackfillTgSignalsCommandTests(TestCase):
+    """The backfill_tg_signals management command turns historical telegram
+    copy-trade positions into StrategySignal rows so they show on the Signals tab."""
+
+    def _neymar_us(self):
+        us = _mk_user_strategy()
+        us.strategy.name = f"Neymar Telegram Copy {uuid.uuid4()}"
+        us.strategy.save()
+        return us
+
+    def test_creates_one_signal_per_position_and_is_idempotent(self):
+        from django.core.management import call_command
+
+        us = self._neymar_us()
+        _mk_position(us, qty="0.04", avg="4100.00")
+        _mk_position(us, qty="0.04", avg="4200.00")
+        # A non-telegram strategy's position must be ignored.
+        other = _mk_user_strategy()
+        _mk_position(other, qty="0.04", avg="3000.00")
+
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 0)
+        call_command("backfill_tg_signals", "--commit")
+
+        sigs = StrategySignal.objects.filter(strategy=us.strategy)
+        self.assertEqual(sigs.count(), 2)
+        self.assertTrue(all(s.status == "PLACED" for s in sigs))
+        self.assertTrue(all(s.position_id is not None for s in sigs))
+        # Unrelated strategy untouched.
+        self.assertEqual(StrategySignal.objects.filter(strategy=other.strategy).count(), 0)
+
+        # Re-running creates nothing (positions already linked).
+        call_command("backfill_tg_signals", "--commit")
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 2)
+
+    def test_dry_run_writes_nothing(self):
+        from django.core.management import call_command
+
+        us = self._neymar_us()
+        _mk_position(us, qty="0.04", avg="4100.00")
+        call_command("backfill_tg_signals")  # no --commit
+        self.assertEqual(StrategySignal.objects.filter(strategy=us.strategy).count(), 0)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Strategy Archive (2026-06-29)
+# ───────────────────────────────────────────────────────────────────────────────
+from types import SimpleNamespace as _SNS
+
+from apis.schema.mutation.user.archive_strategy import ArchiveStrategy
+from apis.schema.mutation.user.unarchive_strategy import UnarchiveStrategy
+from apis.schema.query.archived_strategies import ArchivedStrategies
+from apis.schema.types.user_broker_type import UserBrokerType
+
+
+def _archive_info(user):
+    return _SNS(context=_SNS(user=user))
+
+
+class ArchiveModelTests(TestCase):
+    def test_default_archived_false(self):
+        us = _mk_user_strategy()
+        self.assertFalse(us.archived)
+
+
+class ArchiveMutationTests(TestCase):
+    def test_archive_sets_flags_and_stops_strategy(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = ArchiveStrategy.mutate(None, _archive_info(user), user_strategy_id=str(us.id))
+        us.refresh_from_db()
+        self.assertEqual(res.Response, "Success")
+        self.assertTrue(us.archived)
+        self.assertFalse(us.deployed)
+        self.assertFalse(us.is_active)
+
+    def test_archive_blocked_when_open_position(self):
+        us = _mk_user_strategy()
+        _mk_position(us, qty="0.01", avg="4000")  # open position (qty != 0)
+        user = us.user_broker.user
+        res = ArchiveStrategy.mutate(None, _archive_info(user), user_strategy_id=str(us.id))
+        us.refresh_from_db()
+        self.assertIn("open positions", res.Response.lower())
+        self.assertFalse(us.archived)  # unchanged
+
+    def test_archive_rejected_for_non_owner(self):
+        us = _mk_user_strategy()
+        other = User.objects.create(email=f"x-{uuid.uuid4()}@test.local")
+        res = ArchiveStrategy.mutate(None, _archive_info(other), user_strategy_id=str(us.id))
+        us.refresh_from_db()
+        self.assertEqual(res.Response, "Strategy Does Not Exist")
+        self.assertFalse(us.archived)
+
+    def test_unarchive_clears_flag(self):
+        us = _mk_user_strategy()
+        us.archived = True
+        us.save()
+        user = us.user_broker.user
+        res = UnarchiveStrategy.mutate(None, _archive_info(user), user_strategy_id=str(us.id))
+        us.refresh_from_db()
+        self.assertEqual(res.Response, "Success")
+        self.assertFalse(us.archived)
+
+
+class ArchiveQueryTests(TestCase):
+    def test_archived_query_returns_only_archived_owned(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        us.archived = True
+        us.save()
+        result = list(ArchivedStrategies.resolve_archived_strategies(None, _archive_info(user)))
+        self.assertEqual([s.id for s in result], [us.id])
+
+    def test_broker_resolver_excludes_archived(self):
+        us = _mk_user_strategy()
+        ub = us.user_broker
+        # not archived -> visible
+        visible = list(UserBrokerType.resolve_userstrategys(ub, None))
+        self.assertIn(us.id, [s.id for s in visible])
+        # archived -> hidden
+        us.archived = True
+        us.save()
+        hidden = list(UserBrokerType.resolve_userstrategys(ub, None))
+        self.assertNotIn(us.id, [s.id for s in hidden])
