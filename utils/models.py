@@ -368,3 +368,72 @@ class Order(BaseModel):
         ForeignKey(f"{APP_PREFIX}_userbroker.id", ondelete="CASCADE"),
     )
     apis_userbroker = relationship("UserBroker", back_populates=f"{tablename}s")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Strategy Manager mirrors (2026-07-02 design spec §5).
+#
+# Django (apis/models.py, migration 0007_strategy_manager) owns this schema;
+# these classes only mirror it for non-Django consumers. Table names are the
+# literal canonical names (apis_*, matching the real Django tables — the
+# legacy APP_PREFIX above is "api", which does NOT match the live schema).
+# FK columns are plain UUID columns: the parent tables are not registered in
+# this metadata under their real names, and the FK constraints live in
+# Postgres via the Django migration anyway.
+# ────────────────────────────────────────────────────────────────────────────
+
+class RegimeSnapshot(BaseModel):
+    __tablename__ = "apis_regimesnapshot"
+
+    symbol = Column(String(20), default="XAU_USD")
+    d1_bias = Column(String(10), default="neutral")
+    h4_bias = Column(String(10), default="neutral")
+    vol_regime = Column(String(10), default="NORMAL")  # LOW|NORMAL|HIGH|EXTREME
+    trend_regime = Column(String(10), default="MIXED")  # TRENDING|RANGING|MIXED
+    session = Column(String(10), default="ASIA")  # ASIA|LONDON|NY|OVERLAP|ROLLOVER
+    market_closed = Column(Boolean, default=False)
+    details = Column(JSON, default={})
+
+    def __repr__(self):
+        return f"{self.symbol} vol={self.vol_regime} trend={self.trend_regime}"
+
+
+class ManagedStrategy(BaseModel):
+    __tablename__ = "apis_managedstrategy"
+
+    user_strategy_id = Column(UUID(as_uuid=True), unique=True, nullable=False)
+    slot = Column(String(20), default="")
+    policy_key = Column(String(40), default="")
+    policy_params = Column(JSON, default={})
+    arm_mode = Column(String(5), default="OFF")  # OFF|PAPER|LIVE
+    live_eligible = Column(Boolean, default=False)
+    desired_active = Column(Boolean, default=False)
+    last_reason = Column(String(300), default="")
+    last_evaluated_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self):
+        return f"{self.slot}:{self.user_strategy_id} arm={self.arm_mode}"
+
+
+class ManagerConfig(BaseModel):
+    __tablename__ = "apis_managerconfig"
+
+    master_mode = Column(String(3), default="OFF")  # OFF|ON
+    kill_switch_loss_usd = Column(Numeric(10, 2), default=150.00)
+    max_concurrent_positions = Column(Integer, default=3)
+    state = Column(JSON, default={})
+
+    def __repr__(self):
+        return f"master={self.master_mode}"
+
+
+class ManagerAction(BaseModel):
+    __tablename__ = "apis_manageraction"
+
+    managed_strategy_id = Column(UUID(as_uuid=True), nullable=True)
+    action = Column(String(15), default="INFO")  # START|PAUSE|KILL_SWITCH|INFO
+    reason = Column(String(300), default="")
+    regime = Column(JSON, default={})
+
+    def __repr__(self):
+        return f"{self.action}:{self.reason[:60]}"

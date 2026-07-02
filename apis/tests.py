@@ -827,3 +827,285 @@ class ArchiveQueryTests(TestCase):
         us.save()
         hidden = list(UserBrokerType.resolve_userstrategys(ub, None))
         self.assertNotIn(us.id, [s.id for s in hidden])
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Strategy Manager (2026-07-02)
+# ───────────────────────────────────────────────────────────────────────────────
+
+from apis.models import (
+    ManagedStrategy,
+    ManagerAction,
+    ManagerConfig,
+    RegimeSnapshot,
+)
+from apis.schema.mutation.user.arm_strategy import ArmStrategy
+from apis.schema.mutation.user.set_manager_mode import SetManagerMode
+from apis.schema.mutation.user.update_manager_config import UpdateManagerConfig
+from apis.schema.query.strategy_manager_state import StrategyManagerState
+from apis.schema.query.regime_history import RegimeHistory
+
+
+def _mk_managed(us=None, **kwargs):
+    if us is None:
+        us = _mk_user_strategy()
+    defaults = dict(user_strategy=us, slot="trend", policy_key="always_on")
+    defaults.update(kwargs)
+    return ManagedStrategy.objects.create(**defaults)
+
+
+class ManagerModelDefaultTests(TestCase):
+    def test_regime_snapshot_defaults(self):
+        snap = RegimeSnapshot.objects.create()
+        self.assertEqual(snap.symbol, "XAU_USD")
+        self.assertEqual(snap.d1_bias, "neutral")
+        self.assertEqual(snap.h4_bias, "neutral")
+        self.assertEqual(snap.vol_regime, "NORMAL")
+        self.assertEqual(snap.trend_regime, "MIXED")
+        self.assertEqual(snap.session, "ASIA")
+        self.assertFalse(snap.market_closed)
+        self.assertEqual(snap.details, {})
+
+    def test_managed_strategy_defaults_are_safe(self):
+        ms = _mk_managed()
+        self.assertEqual(ms.arm_mode, "OFF")
+        self.assertFalse(ms.live_eligible)
+        self.assertFalse(ms.desired_active)
+        self.assertEqual(ms.last_reason, "")
+        self.assertIsNone(ms.last_evaluated_at)
+        self.assertEqual(ms.policy_params, {})
+
+    def test_managed_strategy_unique_per_user_strategy(self):
+        ms = _mk_managed()
+        from django.db import IntegrityError, transaction
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ManagedStrategy.objects.create(user_strategy=ms.user_strategy)
+
+    def test_manager_config_defaults(self):
+        cfg = ManagerConfig.objects.create()
+        self.assertEqual(cfg.master_mode, "OFF")
+        self.assertEqual(cfg.kill_switch_loss_usd, Decimal("150.00"))
+        self.assertEqual(cfg.max_concurrent_positions, 3)
+        self.assertEqual(cfg.state, {})
+
+    def test_manager_action_nullable_fk_survives_ms_delete(self):
+        ms = _mk_managed()
+        act = ManagerAction.objects.create(
+            managed_strategy=ms, action="PAUSE", reason="test", regime={"s": "ASIA"}
+        )
+        ms.delete()
+        act.refresh_from_db()
+        self.assertIsNone(act.managed_strategy_id)
+        self.assertEqual(act.action, "PAUSE")
+
+
+class StrategyManagerStateQueryTests(TestCase):
+    def test_manager_config_created_default_off_when_absent(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        self.assertEqual(ManagerConfig.objects.count(), 0)
+        cfg = StrategyManagerState.resolve_manager_config(None, _archive_info(user))
+        self.assertEqual(ManagerConfig.objects.count(), 1)
+        self.assertEqual(cfg.master_mode, "OFF")
+        # Second call reuses the singleton.
+        cfg2 = StrategyManagerState.resolve_manager_config(None, _archive_info(user))
+        self.assertEqual(ManagerConfig.objects.count(), 1)
+        self.assertEqual(cfg2.id, cfg.id)
+
+    def test_managed_strategies_scoped_to_owner(self):
+        mine = _mk_managed()
+        other = _mk_managed()  # different user chain
+        user = mine.user_strategy.user_broker.user
+        result = list(
+            StrategyManagerState.resolve_managed_strategies(None, _archive_info(user))
+        )
+        ids = [m.id for m in result]
+        self.assertIn(mine.id, ids)
+        self.assertNotIn(other.id, ids)
+
+    def test_latest_regime_returns_newest_for_symbol(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        RegimeSnapshot.objects.create(symbol="XAU_USD", vol_regime="LOW")
+        newest = RegimeSnapshot.objects.create(symbol="XAU_USD", vol_regime="HIGH")
+        RegimeSnapshot.objects.create(symbol="BTC_USD", vol_regime="EXTREME")
+        got = StrategyManagerState.resolve_latest_regime(
+            None, _archive_info(user), symbol="XAU_USD"
+        )
+        self.assertEqual(got.id, newest.id)
+        self.assertEqual(got.vol_regime, "HIGH")
+
+    def test_manager_actions_limited_and_newest_first(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        now = timezone.now()
+        for i in range(5):
+            a = ManagerAction.objects.create(action="INFO", reason=f"r{i}")
+            # auto_now_add stamps collide inside a tight loop → make ordering
+            # deterministic by spacing created_at explicitly.
+            ManagerAction.objects.filter(pk=a.pk).update(
+                created_at=now - timedelta(seconds=5 - i)
+            )
+        got = list(
+            StrategyManagerState.resolve_manager_actions(
+                None, _archive_info(user), limit=3
+            )
+        )
+        self.assertEqual(len(got), 3)
+        self.assertEqual(got[0].reason, "r4")
+
+    def test_regime_history_window(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        old = RegimeSnapshot.objects.create(symbol="XAU_USD")
+        RegimeSnapshot.objects.filter(pk=old.pk).update(
+            created_at=timezone.now() - timedelta(hours=48)
+        )
+        recent = RegimeSnapshot.objects.create(symbol="XAU_USD")
+        got = list(
+            RegimeHistory.resolve_regime_history(
+                None, _archive_info(user), symbol="XAU_USD", hours=24
+            )
+        )
+        ids = [s.id for s in got]
+        self.assertIn(recent.id, ids)
+        self.assertNotIn(old.id, ids)
+
+
+class ArmStrategyMutationTests(TestCase):
+    def test_live_rejected_when_not_eligible(self):
+        ms = _mk_managed(live_eligible=False)
+        user = ms.user_strategy.user_broker.user
+        res = ArmStrategy.mutate(
+            None, _archive_info(user),
+            managed_strategy_id=str(ms.id), arm_mode="LIVE",
+        )
+        ms.refresh_from_db()
+        self.assertIn("live-eligible", res.Response)
+        self.assertEqual(ms.arm_mode, "OFF")  # unchanged
+
+    def test_live_accepted_when_eligible(self):
+        ms = _mk_managed(live_eligible=True)
+        user = ms.user_strategy.user_broker.user
+        res = ArmStrategy.mutate(
+            None, _archive_info(user),
+            managed_strategy_id=str(ms.id), arm_mode="LIVE",
+        )
+        ms.refresh_from_db()
+        self.assertEqual(res.Response, "Success")
+        self.assertEqual(ms.arm_mode, "LIVE")
+
+    def test_paper_allowed_without_eligibility(self):
+        ms = _mk_managed(live_eligible=False)
+        user = ms.user_strategy.user_broker.user
+        res = ArmStrategy.mutate(
+            None, _archive_info(user),
+            managed_strategy_id=str(ms.id), arm_mode="PAPER",
+        )
+        ms.refresh_from_db()
+        self.assertEqual(res.Response, "Success")
+        self.assertEqual(ms.arm_mode, "PAPER")
+
+    def test_invalid_mode_rejected(self):
+        ms = _mk_managed()
+        user = ms.user_strategy.user_broker.user
+        res = ArmStrategy.mutate(
+            None, _archive_info(user),
+            managed_strategy_id=str(ms.id), arm_mode="YOLO",
+        )
+        ms.refresh_from_db()
+        self.assertIn("Invalid arm mode", res.Response)
+        self.assertEqual(ms.arm_mode, "OFF")
+
+    def test_non_owner_rejected(self):
+        ms = _mk_managed(live_eligible=True)
+        other = _mk_user_strategy().user_broker.user
+        res = ArmStrategy.mutate(
+            None, _archive_info(other),
+            managed_strategy_id=str(ms.id), arm_mode="PAPER",
+        )
+        ms.refresh_from_db()
+        self.assertEqual(res.Response, "Managed Strategy Does Not Exist")
+        self.assertEqual(ms.arm_mode, "OFF")
+
+
+class SetManagerModeMutationTests(TestCase):
+    def test_flips_on_then_off(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = SetManagerMode.mutate(None, _archive_info(user), master_mode="ON")
+        self.assertEqual(res.Response, "Success")
+        self.assertEqual(res.ManagerConfig.master_mode, "ON")
+        self.assertEqual(ManagerConfig.objects.count(), 1)
+
+        res = SetManagerMode.mutate(None, _archive_info(user), master_mode="OFF")
+        self.assertEqual(res.Response, "Success")
+        self.assertEqual(
+            ManagerConfig.objects.order_by("created_at").first().master_mode, "OFF"
+        )
+        self.assertEqual(ManagerConfig.objects.count(), 1)  # still singleton
+
+    def test_invalid_mode_rejected(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = SetManagerMode.mutate(None, _archive_info(user), master_mode="MAYBE")
+        self.assertIn("Invalid mode", res.Response)
+        self.assertEqual(ManagerConfig.objects.count(), 0)  # nothing created
+
+
+class UpdateManagerConfigMutationTests(TestCase):
+    def test_updates_both_guards(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = UpdateManagerConfig.mutate(
+            None, _archive_info(user),
+            kill_switch_loss_usd=200.0, max_concurrent_positions=5,
+        )
+        self.assertEqual(res.Response, "Success")
+        cfg = ManagerConfig.objects.get()
+        self.assertEqual(cfg.kill_switch_loss_usd, Decimal("200.00"))
+        self.assertEqual(cfg.max_concurrent_positions, 5)
+        self.assertEqual(cfg.master_mode, "OFF")  # untouched
+
+    def test_rejects_nonpositive_kill_switch(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = UpdateManagerConfig.mutate(
+            None, _archive_info(user), kill_switch_loss_usd=-10.0,
+        )
+        self.assertIn("positive", res.Response)
+
+    def test_rejects_zero_max_positions(self):
+        us = _mk_user_strategy()
+        user = us.user_broker.user
+        res = UpdateManagerConfig.mutate(
+            None, _archive_info(user), max_concurrent_positions=0,
+        )
+        self.assertIn("at least 1", res.Response)
+
+
+class ManagedStrategyTypeResolverTests(TestCase):
+    def test_strategy_name_and_open_positions(self):
+        from apis.schema.types.managed_strategy_type import ManagedStrategyType
+        ms = _mk_managed()
+        us = ms.user_strategy
+        _mk_position(us, qty="0.01", avg="4500")            # open
+        _mk_position(us, qty="0", avg="4500", realized="1") # closed
+        self.assertEqual(
+            ManagedStrategyType.resolve_strategyName(ms, None), us.strategy.name
+        )
+        self.assertEqual(ManagedStrategyType.resolve_openPositions(ms, None), 1)
+
+    def test_today_pnl_sums_only_today(self):
+        from apis.schema.types.managed_strategy_type import ManagedStrategyType
+        ms = _mk_managed()
+        us = ms.user_strategy
+        _mk_position(us, qty="0", avg="4500", realized="2.50")  # today
+        _mk_position(
+            us, qty="0", avg="4500", realized="9.99",
+            created_at=timezone.now() - timedelta(days=3),
+        )  # not today
+        self.assertAlmostEqual(
+            ManagedStrategyType.resolve_todayPnl(ms, None), 2.50, places=2
+        )

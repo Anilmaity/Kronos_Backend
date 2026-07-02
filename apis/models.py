@@ -347,3 +347,114 @@ class BacktestReport(BaseModel):
 
     def __str__(self):
         return f"{self.run_label}:{self.strategy_id}"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Strategy Manager (2026-07-02 design spec §5) — regime-aware meta-controller.
+# Django owns this schema; SQLAlchemy mirrors live in utils/models.py (this
+# repo) and KronosStrategies strategies/shared/models.py.
+# ────────────────────────────────────────────────────────────────────────────
+
+class RegimeSnapshot(BaseModel):
+    """Point-in-time market regime computed by the strategy_manager service."""
+
+    VOL_REGIME = (
+        ("LOW", "LOW"),
+        ("NORMAL", "NORMAL"),
+        ("HIGH", "HIGH"),
+        ("EXTREME", "EXTREME"),
+    )
+    TREND_REGIME = (
+        ("TRENDING", "TRENDING"),
+        ("RANGING", "RANGING"),
+        ("MIXED", "MIXED"),
+    )
+    SESSION = (
+        ("ASIA", "ASIA"),
+        ("LONDON", "LONDON"),
+        ("NY", "NY"),
+        ("OVERLAP", "OVERLAP"),
+        ("ROLLOVER", "ROLLOVER"),
+    )
+
+    symbol = models.CharField(max_length=20, default="XAU_USD")
+    d1_bias = models.CharField(max_length=10, default="neutral")
+    h4_bias = models.CharField(max_length=10, default="neutral")
+    vol_regime = models.CharField(max_length=10, choices=VOL_REGIME, default="NORMAL")
+    trend_regime = models.CharField(max_length=10, choices=TREND_REGIME, default="MIXED")
+    session = models.CharField(max_length=10, choices=SESSION, default="ASIA")
+    market_closed = models.BooleanField(default=False)
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["symbol", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.symbol} d1={self.d1_bias} h4={self.h4_bias} vol={self.vol_regime} trend={self.trend_regime} {self.session}"
+
+
+class ManagedStrategy(BaseModel):
+    """A UserStrategy placed under Strategy Manager control (one per UserStrategy)."""
+
+    ARM_MODE = (
+        ("OFF", "OFF"),
+        ("PAPER", "PAPER"),
+        ("LIVE", "LIVE"),
+    )
+
+    user_strategy = models.OneToOneField(
+        UserStrategy, on_delete=models.CASCADE, related_name="managed_strategy"
+    )
+    slot = models.CharField(max_length=20, default="")
+    policy_key = models.CharField(max_length=40, default="")
+    policy_params = models.JSONField(default=dict, blank=True)
+    arm_mode = models.CharField(max_length=5, choices=ARM_MODE, default="OFF")
+    live_eligible = models.BooleanField(default=False)
+    desired_active = models.BooleanField(default=False)
+    last_reason = models.CharField(max_length=300, default="", blank=True)
+    last_evaluated_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.slot}:{self.user_strategy_id} arm={self.arm_mode}"
+
+
+class ManagerConfig(BaseModel):
+    """Singleton row: global Strategy Manager switches and guards."""
+
+    MASTER_MODE = (
+        ("OFF", "OFF"),
+        ("ON", "ON"),
+    )
+
+    master_mode = models.CharField(max_length=3, choices=MASTER_MODE, default="OFF")
+    kill_switch_loss_usd = models.DecimalField(
+        max_digits=10, decimal_places=2, default=150.00
+    )
+    max_concurrent_positions = models.IntegerField(default=3)
+    state = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"master={self.master_mode} kill=${self.kill_switch_loss_usd} maxpos={self.max_concurrent_positions}"
+
+
+class ManagerAction(BaseModel):
+    """Audit log of every decision the manager loop takes."""
+
+    ACTION = (
+        ("START", "START"),
+        ("PAUSE", "PAUSE"),
+        ("KILL_SWITCH", "KILL_SWITCH"),
+        ("INFO", "INFO"),
+    )
+
+    managed_strategy = models.ForeignKey(
+        ManagedStrategy, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    action = models.CharField(max_length=15, choices=ACTION, default="INFO")
+    reason = models.CharField(max_length=300, default="", blank=True)
+    regime = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"{self.action}:{self.reason[:60]}"
