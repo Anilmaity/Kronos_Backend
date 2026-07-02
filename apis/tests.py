@@ -1109,3 +1109,33 @@ class ManagedStrategyTypeResolverTests(TestCase):
         self.assertAlmostEqual(
             ManagedStrategyType.resolve_todayPnl(ms, None), 2.50, places=2
         )
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# UserStrategyType.resolve_brokerName (2026-07-02 /manager regression)
+# ───────────────────────────────────────────────────────────────────────────────
+
+class BrokerNameResolverTests(TestCase):
+    """UserBroker lost its `broker` FK in the MetaAPI migration, but the
+    resolver still dereferenced user_broker.broker.name — any query selecting
+    brokerName (manager tab, archive tab) errored the whole GraphQL response."""
+
+    def test_returns_label_when_set(self):
+        us = _mk_user_strategy()
+        us.user_broker.label = "FundingPips Anil"
+        us.user_broker.save()
+        self.assertEqual(
+            UserStrategyType.resolve_brokerName(us, None), "FundingPips Anil"
+        )
+
+    def test_falls_back_to_meta_account_id(self):
+        us = _mk_user_strategy()
+        us.user_broker.meta_account_id = "5216074f-abcd"
+        us.user_broker.save()
+        self.assertEqual(
+            UserStrategyType.resolve_brokerName(us, None), "5216074f-abcd"
+        )
+
+    def test_none_when_nothing_set(self):
+        us = _mk_user_strategy()
+        self.assertIsNone(UserStrategyType.resolve_brokerName(us, None))

@@ -70,9 +70,13 @@ class UserStrategyType(DjangoObjectType):
         )
 
 
-    # get specific broker name
+    # Broker display name. UserBroker lost its `broker` FK in the MetaAPI
+    # migration — label / meta_account_id are what identify the account now.
     def resolve_brokerName(self, info):
-        return self.user_broker.broker.name
+        ub = self.user_broker
+        if ub is None:
+            return None
+        return ub.label or ub.meta_account_id or None
 
     # fetching position values for user
 
