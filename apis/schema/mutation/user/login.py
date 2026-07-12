@@ -1,4 +1,6 @@
 
+import logging
+
 import graphene
 
 from graphql_jwt.shortcuts import get_token
@@ -6,6 +8,8 @@ from django.contrib.auth import authenticate
 
 from apis.models import User
 from apis.schema.types.user_type import UserType
+
+logger = logging.getLogger(__name__)
 
 
 class Login(graphene.Mutation):
@@ -30,4 +34,5 @@ class Login(graphene.Mutation):
             else:
                 return Login(Response="Invalid User or Password", success=False)
         except User.DoesNotExist:
+            logger.warning("Login: user not found (email=%s)", email)
             return Login(Response="User not found", success=False)

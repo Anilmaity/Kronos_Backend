@@ -1,15 +1,5 @@
-import os
-import importlib
+from apis.schema.discovery import discover_classes
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-
-imported_classes = {}
-
-for file_name in os.listdir(base_dir):
-    if file_name.endswith('.py') and file_name != '__init__.py':
-        module_name = file_name[:-3]
-        module_path = f'{__package__}.{module_name}'
-        module = importlib.import_module(module_path)
-        class_name = ''.join(word.capitalize() for word in module_name.split('_'))
-        if hasattr(module, class_name):
-            imported_classes[class_name] = getattr(module, class_name)
+# Importing the sibling modules is the point here — it registers every
+# DjangoObjectType with graphene-django. The collected classes are unused.
+imported_classes = discover_classes(__package__, __file__)

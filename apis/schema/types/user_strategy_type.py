@@ -1,17 +1,14 @@
 #####################################################################   LIBRARIES   ########################################################################
 
-from datetime import datetime
 import graphene
 from graphene_django import DjangoObjectType
 from django.db.models import Q
-from pytz import timezone
 
 
+from apis.constants import today_ist
 from apis.models import (UserStrategy)
 from apis.schema.types.position_type import PositionType
 from apis.schema.types.pnl import position_pnl
-
-kolkata = timezone("Asia/Kolkata")
 
 
 def _positions_qs(self, date, userstrategy_ids):
@@ -20,10 +17,11 @@ def _positions_qs(self, date, userstrategy_ids):
     today IST when not given). userstrategy_ids further narrows the set
     when present.
     """
-    qs = self.position_set.all()
+    # select_related: every consumer touches position.currencypair (ltp) — avoid N+1.
+    qs = self.position_set.select_related("currencypair")
     if userstrategy_ids:
         qs = qs.filter(user_strategy__in=userstrategy_ids)
-    target_date = date if date else datetime.now(tz=kolkata).date()
+    target_date = date if date else today_ist()
     return qs.filter(Q(created_at__date=target_date) | ~Q(quantity=0)).order_by(
         "-created_at"
     )

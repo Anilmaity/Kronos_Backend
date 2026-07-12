@@ -1,9 +1,11 @@
 
-import graphql_jwt
+import logging
 
 import graphene
+import graphql_jwt.shortcuts
 
-from graphql_jwt.shortcuts import get_token
+logger = logging.getLogger(__name__)
+
 
 class VerifyToken(graphene.Mutation):
     success = graphene.Boolean()
@@ -19,4 +21,5 @@ class VerifyToken(graphene.Mutation):
             if user.is_authenticated:
                 return VerifyToken(success=True)
         except Exception:
+            logger.warning("VerifyToken: token validation failed", exc_info=True)
             return VerifyToken(success=False)

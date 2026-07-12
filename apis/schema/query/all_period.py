@@ -1,8 +1,6 @@
 import graphene
 
-from apis.models import CurrencyPair
 from apis.schema.utils import user_authenticate
-from apis.schema.types.currency_pair_type import CurrencyPairType
 
 
 

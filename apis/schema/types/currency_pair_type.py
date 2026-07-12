@@ -2,8 +2,7 @@
 import graphene
 from graphene_django import DjangoObjectType
 
-from apis.models import (Action, Order, Position, CurrencyPair,
-                               Signal, Strategy, Trigger)
+from apis.models import CurrencyPair
 
 
 class CurrencyPairType(DjangoObjectType):

@@ -1,18 +1,13 @@
 #####################################################################   LIBRARIES   ########################################################################
-from datetime import datetime, timedelta
-
 from django.db.models import Sum
 
+from apis.constants import today_ist
 from apis.schema.types.action_type import ActionType
 from apis.schema.types.signal_type import SignalType
 import graphene
 from graphene_django import DjangoObjectType
 
 from apis.models import (Strategy, Position)
-import pytz
-
-
-kolkata = pytz.timezone("Asia/Kolkata")
 ##############################################################################################################################################################
 
 
@@ -49,7 +44,7 @@ class StrategyType(DjangoObjectType):
         if date:
             return self.signal_set.filter(created_at__date=date).order_by('created_at')
         else:
-            return self.signal_set.filter(created_at__date=datetime.now(tz=kolkata).date()).order_by('created_at')
+            return self.signal_set.filter(created_at__date=today_ist()).order_by('created_at')
 
 
 
@@ -76,7 +71,7 @@ class StrategyType(DjangoObjectType):
 
     def resolve_today_signals(self, info, ):
         if info.context.user.is_superuser:
-            return self.signal_set.filter(created_at__date=datetime.now(tz = kolkata).date()).order_by('created_at')
+            return self.signal_set.filter(created_at__date=today_ist()).order_by('created_at')
         else:
             return []
     def resolve_symbol(self, info, ):

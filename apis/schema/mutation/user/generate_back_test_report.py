@@ -1,17 +1,15 @@
 
-from datetime import datetime, timedelta
+import logging
+from datetime import timedelta
 
 import graphene
-import pytz
 import requests
 
 
-from apis.schema.utils import admin_authenticate, user_authenticate
+from apis.constants import today_ist
+from apis.schema.utils import user_authenticate
 
-# Timezone
-
-
-kolkata = pytz.timezone("Asia/Kolkata")
+logger = logging.getLogger(__name__)
 
 class GenerateBackTestReport(graphene.Mutation):
     Response = graphene.String()
@@ -31,15 +29,15 @@ class GenerateBackTestReport(graphene.Mutation):
             return GenerateBackTestReport(
                 Response="From date should be less than to date", Success=False
             )
-        if from_date > datetime.now(tz=kolkata).date():
+        if from_date > today_ist():
             return GenerateBackTestReport(
                 Response="From date should be less than current date", Success=False
             )
-        if to_date > datetime.now(tz=kolkata).date():
+        if to_date > today_ist():
             return GenerateBackTestReport(
                 Response="To date should be less than current date", Success=False
             )
-        if from_date < datetime.now(tz=kolkata).date() - timedelta(days=365):
+        if from_date < today_ist() - timedelta(days=365):
             return GenerateBackTestReport(
                 Response="From date should be within 12 month", Success=False
             )
@@ -60,10 +58,19 @@ class GenerateBackTestReport(graphene.Mutation):
                 Response=response.text, Success=False
             )
         except requests.exceptions.Timeout:
+            # Expected path: the lambda keeps working past our 3s timeout.
+            logger.warning(
+                "GenerateBackTestReport: lambda call timed out (strategy_id=%s)",
+                strategy_id,
+            )
             return GenerateBackTestReport(
                 Response="Backtest Report is being generated", Success=True
             )
         except requests.exceptions.RequestException as e:
+            logger.exception(
+                "GenerateBackTestReport: lambda call failed (strategy_id=%s)",
+                strategy_id,
+            )
             return GenerateBackTestReport(
                 Response="Unexpected Error from Backtest ", Success=True
             )

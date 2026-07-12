@@ -31,7 +31,8 @@ class StrategyManagerState(graphene.ObjectType):
 
     @user_authenticate
     def resolve_managed_strategies(self, info):
-        qs = ManagedStrategy.objects.all()
+        # select_related: resolve_strategyName walks user_strategy.strategy — avoid N+1.
+        qs = ManagedStrategy.objects.select_related("user_strategy__strategy")
         if not info.context.user.is_superuser:
             qs = qs.filter(user_strategy__user_broker__user=info.context.user)
         return qs.order_by("slot", "created_at")

@@ -1,9 +1,5 @@
 
-import graphql_jwt
-
 import graphene
-
-from graphql_jwt.shortcuts import get_token
 
 from apis.models import UserStrategy , Strategy, UserBroker
 from apis.schema.utils import admin_authenticate

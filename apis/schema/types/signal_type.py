@@ -1,6 +1,4 @@
 #####################################################################   LIBRARIES   ########################################################################
-import datetime
-
 import graphene
 from graphene_django import DjangoObjectType
 
@@ -29,7 +27,6 @@ class SignalType(DjangoObjectType):
         self,
         info,
     ):
-        localdatetime = self.created_at
-        localdatetime = localdatetime.strftime("%Y-%m-%d %H:%M:%S")
-        localdatetime = datetime.datetime.strptime(localdatetime, "%Y-%m-%d %H:%M:%S")
-        return localdatetime.time()
+        # Same value/serialization as the old strftime->strptime roundtrip,
+        # which truncated microseconds to zero.
+        return self.created_at.time().replace(microsecond=0)

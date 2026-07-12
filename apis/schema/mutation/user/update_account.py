@@ -1,9 +1,13 @@
+import logging
+
 import graphene
 
 from apis.models import UserBroker
 from apis.schema.utils import user_authenticate
 from apis.schema.types.user_broker_type import UserBrokerType
 from apis.crypto import encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateAccount(graphene.Mutation):
@@ -34,6 +38,7 @@ class UpdateAccount(graphene.Mutation):
             try:
                 broker.meta_api_token_enc = encrypt_token(meta_api_token)
             except Exception:
+                logger.exception("UpdateAccount: token encryption failed")
                 return UpdateAccount(
                     Response="Server encryption key not configured", UserBroker=None
                 )

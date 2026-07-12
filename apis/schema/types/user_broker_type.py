@@ -1,21 +1,16 @@
 #####################################################################   LIBRARIES   ########################################################################
-from datetime import datetime, timedelta
-
-
 import graphene
 from django.db.models import Sum
 from graphene_django import DjangoObjectType
-from pytz import timezone
 
 
+from apis.constants import today_ist
 from apis.models import (Position,
                                 UserBroker,
                                 models)
 from apis.schema.types.position_type import PositionType
 from apis.schema.types.strategy_type import AnalyticsType
 from apis.schema.types.user_strategy_type import UserStrategyType
-
-kolkata = timezone("Asia/Kolkata")
 
 ##############################################################################################################################################################
 
@@ -58,7 +53,7 @@ class UserBrokerType(DjangoObjectType):
 
     def resolve_today_actual_total_profit_loss(self, info):
         broker_positions = self.userbrokerposition_set.filter(
-            created_at__date=datetime.now(tz=kolkata).date()
+            created_at__date=today_ist()
         ).aggregate(Sum("profit_loss"))["profit_loss__sum"]
 
         if broker_positions:
@@ -94,7 +89,7 @@ class UserBrokerType(DjangoObjectType):
     def resolve_strategy_positions(self, info):
         positions = (
             Position.objects.filter(
-                created_at__date=datetime.now(tz=kolkata).date(),
+                created_at__date=today_ist(),
             )
             .exclude(quantity=0)
             .order_by("-id")
@@ -147,10 +142,11 @@ class UserBrokerType(DjangoObjectType):
         return daily_positions
 
     def resolve_userstrategys(self, info, strategies=[]):
+        # select_related: UserStrategyType resolvers touch .strategy and .user_broker.
+        qs = self.userstrategy_set.select_related("strategy", "user_broker")
         if len(strategies) > 0:
-            return self.userstrategy_set.filter(strategy__in=strategies).exclude(archived=True).order_by("-created_at")
-        else:
-            return self.userstrategy_set.exclude(archived=True).order_by("-created_at")
+            qs = qs.filter(strategy__in=strategies)
+        return qs.exclude(archived=True).order_by("-created_at")
 
     class Meta:
         model = UserBroker

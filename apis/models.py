@@ -1,18 +1,14 @@
 #####################################################################   LIBRARIES   ########################################################################
-import inspect
 import uuid
 
-import ta
 from django.contrib.auth.models import (AbstractBaseUser, BaseUserManager,
-                                        PermissionsMixin, User)
+                                        PermissionsMixin)
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 # import datetime
 from django.utils import timezone
 
 from Kronos_Backend.utils.base_model import BaseModel
-
-from django.contrib.postgres.fields import ArrayField
 
 
 #########################################################################################################################################################

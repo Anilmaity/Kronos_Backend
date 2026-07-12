@@ -4,7 +4,6 @@ from datetime import datetime
 import graphene
 from django.db.models import Sum
 from graphene_django import DjangoObjectType
-from pytz import timezone
 
 
 from apis.models import (Position, Strategy, User,UserStrategy)
@@ -12,8 +11,6 @@ from apis.schema.types.position_type import PositionType
 from apis.schema.types.strategy_type import StrategyType
 from apis.schema.types.user_broker_type import UserBrokerType
 from apis.schema.types.user_strategy_type import UserStrategyType
-
-kolkata = timezone("Asia/Kolkata")
 ##############################################################################################################################################################
 
 
@@ -50,7 +47,12 @@ class UserType(DjangoObjectType):
         exclude = ("userbroker_set", "password", "email", "username")
 
     def resolve_userstrategys(self, info):
-        return UserStrategy.objects.filter(user_broker__user=self).exclude(archived=True).order_by("-created_at")
+        return (
+            UserStrategy.objects.filter(user_broker__user=self)
+            .exclude(archived=True)
+            .select_related("strategy", "user_broker")
+            .order_by("-created_at")
+        )
 
 
 

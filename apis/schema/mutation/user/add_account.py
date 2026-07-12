@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 import graphene
@@ -6,6 +7,8 @@ from apis.models import UserBroker
 from apis.schema.utils import user_authenticate
 from apis.schema.types.user_broker_type import UserBrokerType
 from apis.crypto import encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class AddAccount(graphene.Mutation):
@@ -22,6 +25,7 @@ class AddAccount(graphene.Mutation):
         try:
             enc = encrypt_token(meta_api_token)
         except Exception:
+            logger.exception("AddAccount: token encryption failed")
             return AddAccount(
                 Response="Server encryption key not configured", UserBroker=None
             )

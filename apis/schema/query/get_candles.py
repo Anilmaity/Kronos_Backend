@@ -1,6 +1,10 @@
+import logging
+
 import graphene
 from django.db import connections
 from graphql import GraphQLError
+
+logger = logging.getLogger(__name__)
 
 
 INTERVAL_MAP = {
@@ -67,6 +71,7 @@ class GetCandles(graphene.ObjectType):
                 cur.execute(sql, [bucket_sql, symbol, history_secs, limit])
                 rows = cur.fetchall()
         except Exception as exc:
+            logger.exception("candles query failed (symbol=%s interval=%s)", symbol, interval)
             raise GraphQLError(f"candles query failed: {exc}")
 
         return [

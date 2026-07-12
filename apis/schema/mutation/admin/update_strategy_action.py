@@ -18,7 +18,6 @@ class UpdateStrategyAction(graphene.Mutation):
     @admin_authenticate
     def mutate(self, info, id, points=None, create_trigger=None, quantity=None):
         try:
-            Action.objects.get(id=id)
             action = Action.objects.get(id=id)
             if points:
                 action.trigger_value = points

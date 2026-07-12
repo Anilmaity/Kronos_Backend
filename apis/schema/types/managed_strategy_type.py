@@ -1,16 +1,13 @@
-from datetime import datetime
-
 import graphene
+from django.db.models import Sum
 from graphene_django import DjangoObjectType
-from pytz import timezone
 
+from apis.constants import today_ist
 from apis.models import ManagedStrategy
 # Importing UserStrategyType registers it with graphene-django so the
 # `user_strategy` relation on ManagedStrategyType resolves to the full
 # UserStrategyType (positions, totals, brokerName, ...) instead of a stub.
 from apis.schema.types.user_strategy_type import UserStrategyType  # noqa: F401
-
-kolkata = timezone("Asia/Kolkata")
 
 
 class ManagedStrategyType(DjangoObjectType):
@@ -28,15 +25,12 @@ class ManagedStrategyType(DjangoObjectType):
     def resolve_todayPnl(self, info):
         """Sum of today's (IST, matching the rest of the API) realized P&L
         over this managed UserStrategy's positions."""
-        today = datetime.now(tz=kolkata).date()
-        return float(
-            sum(
-                p.realized_profit_loss
-                for p in self.user_strategy.position_set.filter(
-                    created_at__date=today
-                )
-            )
-        )
+        today = today_ist()
+        total = self.user_strategy.position_set.filter(
+            created_at__date=today
+        ).aggregate(total=Sum("realized_profit_loss"))["total"]
+        # Sum() is None on an empty queryset; the old Python-side sum() gave 0.
+        return float(total or 0)
 
     def resolve_openPositions(self, info):
         # "Open" = quantity != 0, the definition used everywhere else in this

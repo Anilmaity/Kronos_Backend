@@ -51,14 +51,7 @@ class PositionType(DjangoObjectType):
         self,
         info,
     ):
-        orders_by_created_at = self.order_set.all().order_by("-created_at")
-
-        # Retrieve orders ordered by 'condition' in descending order
-        self.order_set.all().order_by("condition")
-
-        # Combine the two querysets into a single queryset
-
-        return orders_by_created_at
+        return self.order_set.all().order_by("-created_at")
 
     def resolve_triggers(self,info):
         return self.trigger_set.all()

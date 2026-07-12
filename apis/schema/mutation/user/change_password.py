@@ -1,6 +1,4 @@
 
-import graphql_jwt
-
 import graphene
 from django.contrib.auth.hashers import check_password, make_password
 from graphql import GraphQLError

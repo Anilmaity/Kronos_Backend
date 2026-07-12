@@ -62,7 +62,7 @@ The entire API surface is GraphQL at `/graphql/`. There are no REST views (`api/
   - `user/` — login, strategy subscription, position management, backtesting
 
 ### Authentication
-JWT-based via `django-graphql-jwt`. Token is passed in the `Authorization: JWT <token>` header. Auth decorators live in `api/schema/utils/auth.py` (`@user_authenticate`, `@admin_authenticate`).
+JWT-based via `django-graphql-jwt`. Token is passed in the `Authorization: JWT <token>` header. Auth decorators live in `apis/schema/utils/__init__.py` (`@user_authenticate`, `@admin_authenticate`).
 
 JWT expiry: 6 hours. No refresh tokens by default.
 
