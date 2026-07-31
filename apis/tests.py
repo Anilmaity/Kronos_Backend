@@ -1161,3 +1161,94 @@ class ManagerBacktestRunModelTests(TestCase):
         self.assertIsNone(run.result)
         self.assertEqual(run.error, "")
         self.assertIsNone(run.requested_by)
+
+
+# ---------------------------------------------------------------------------
+# Manager Backtest mutations + queries (plan Tasks 2-3)
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+
+def _auth_info(user):
+    return SimpleNamespace(context=SimpleNamespace(user=user))
+
+
+def _mk_run(**kw):
+    from apis.models import ManagerBacktestRun
+    defaults = dict(
+        label="r", period_start=date(2026, 1, 1), period_end=date(2026, 2, 1))
+    defaults.update(kw)
+    return ManagerBacktestRun.objects.create(**defaults)
+
+
+class RunManagerBacktestTests(TestCase):
+    def setUp(self):
+        from apis.models import ManagedStrategy
+        self.us = _mk_user_strategy()
+        self.user = self.us.user_broker.user
+        self.ms = ManagedStrategy.objects.create(
+            user_strategy=self.us, slot="scalp", policy_key="always_on",
+            policy_params={"x": 1}, arm_mode="LIVE",
+        )
+
+    def _mutate(self, **kw):
+        from apis.schema.mutation.user.run_manager_backtest import RunManagerBacktest
+        args = dict(period_start=date(2026, 1, 1), period_end=date(2026, 3, 1))
+        args.update(kw)
+        return RunManagerBacktest.mutate(None, _auth_info(self.user), **args)
+
+    def test_run_manager_backtest_creates_pending(self):
+        from apis.models import ManagerBacktestRun
+        res = self._mutate()
+        self.assertTrue(res.ok, res.error)
+        run = ManagerBacktestRun.objects.get(id=res.run_id)
+        self.assertEqual(run.status, "PENDING")
+        self.assertEqual(run.label, "audit_2026-01-01_2026-03-01")
+        self.assertEqual(run.params["spread_pts"], 0.30)
+        self.assertEqual(run.params["kill_switch_usd"], 150.0)
+        self.assertEqual(run.params["include_ungated"], False)
+        snap = run.params["roster_snapshot"]
+        self.assertEqual(len(snap), 1)
+        self.assertEqual(snap[0]["name"], self.us.strategy.name)
+        self.assertEqual(snap[0]["policy_key"], "always_on")
+        self.assertEqual(snap[0]["policy_params"], {"x": 1})
+        self.assertEqual(run.requested_by, self.user)
+
+    def test_off_strategies_excluded_from_snapshot(self):
+        self.ms.arm_mode = "OFF"
+        self.ms.save()
+        res = self._mutate()
+        from apis.models import ManagerBacktestRun
+        run = ManagerBacktestRun.objects.get(id=res.run_id)
+        self.assertEqual(run.params["roster_snapshot"], [])
+
+    def test_run_manager_backtest_rejects_bad_window(self):
+        res = self._mutate(period_start=date(2026, 3, 1), period_end=date(2026, 3, 1))
+        self.assertFalse(res.ok)
+        res = self._mutate(period_end=date.today() + timedelta(days=2))
+        self.assertFalse(res.ok)
+        res = self._mutate(period_start=date(2025, 1, 1), period_end=date(2026, 3, 1))
+        self.assertFalse(res.ok)
+        self.assertIn("366", res.error)
+
+    def test_run_manager_backtest_queue_cap(self):
+        for i in range(3):
+            _mk_run(label=f"q{i}", status="PENDING" if i else "RUNNING")
+        res = self._mutate()
+        self.assertFalse(res.ok)
+        self.assertIn("queue full", res.error)
+
+    def test_cancel_manager_backtest(self):
+        from apis.schema.mutation.user.cancel_manager_backtest import (
+            CancelManagerBacktest,
+        )
+        from apis.models import ManagerBacktestRun
+        run = _mk_run(status="PENDING")
+        res = CancelManagerBacktest.mutate(None, _auth_info(self.user), run_id=run.id)
+        self.assertTrue(res.ok)
+        run.refresh_from_db()
+        self.assertEqual(run.status, "CANCELLED")
+        done = _mk_run(status="DONE")
+        res = CancelManagerBacktest.mutate(None, _auth_info(self.user), run_id=done.id)
+        self.assertFalse(res.ok)
