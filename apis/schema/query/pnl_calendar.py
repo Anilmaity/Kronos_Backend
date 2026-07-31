@@ -56,6 +56,7 @@ class PnlCalendar(graphene.ObjectType):
         if not 2020 <= year <= date.today().year + 1:
             raise GraphQLError("year out of range")
         start, end = _month_bounds(year, month)
+        user = info.context.user
 
         exit_sq = (Order.objects.filter(position=OuterRef("pk"))
                    .exclude(condition="ENTRY").order_by()
@@ -64,6 +65,11 @@ class PnlCalendar(graphene.ObjectType):
         qs = (Position.objects.filter(quantity=0)
               .annotate(exit_at=Coalesce(Subquery(exit_sq), F("modified_at")))
               .filter(exit_at__gte=start, exit_at__lt=end))
+        # Scoping mirrors StrategyManagerState.resolve_managed_strategies:
+        # non-superusers only ever see their own brokers' data; superusers see
+        # everything. Without this, days/accounts leaked every user's PnL.
+        if not user.is_superuser:
+            qs = qs.filter(user_strategy__user_broker__user=user)
         if userBrokerId:
             qs = qs.filter(user_strategy__user_broker_id=userBrokerId)
 
@@ -76,12 +82,16 @@ class PnlCalendar(graphene.ObjectType):
 
         days = [PnlDayType(date=d, pnlUsd=round(v["pnl"], 2), trades=v["n"])
                 for d, v in sorted(by_day.items())]
+
+        accounts_qs = UserBroker.objects.filter(
+            userstrategy__position__quantity=0).distinct()
+        if not user.is_superuser:
+            accounts_qs = accounts_qs.filter(user=user)
         accounts = [
             PnlAccountType(id=b.id,
                            label=b.label or b.meta_account_id or "unnamed",
                            isActive=b.is_active)
-            for b in UserBroker.objects.filter(
-                userstrategy__position__quantity=0).distinct().order_by("label")
+            for b in accounts_qs.order_by("label")
         ]
         return PnlCalendarType(
             days=days,

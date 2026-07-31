@@ -1315,6 +1315,20 @@ class PnlCalendarTests(TestCase):
     def _resolve(self, **kw):
         return self.PnlCalendar.resolve_pnlCalendar(None, _auth_info(self.user), **kw)
 
+    def _mk_second_broker(self, user, symbol="XAU_USD", ltp="4540.00"):
+        """Second UserBroker + UserStrategy owned by the SAME user (multi-account
+        per user) -- distinct from _mk_user_strategy(), which always creates a
+        brand-new owning User. Used for same-user accounts/userBrokerId tests."""
+        cp, _ = CurrencyPair.objects.get_or_create(
+            symbol=symbol, defaults={"name": symbol, "ltp": ltp})
+        ub = UserBroker.objects.create(user=user, api_key=str(uuid.uuid4()))
+        strat = Strategy.objects.create(
+            name=f"Test {symbol} {uuid.uuid4()}", currencypair=cp,
+            entry_quantity=Decimal("0.01"), is_active=True)
+        return UserStrategy.objects.create(
+            strategy=strat, user_broker=ub, is_active=True, deployed=True,
+            multiplyer=1)
+
     def test_day_bucketing_and_usd(self):
         self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
         self._close(self.us, "-0.2", datetime(2026, 7, 10, 15, 0))
@@ -1354,7 +1368,10 @@ class PnlCalendarTests(TestCase):
         self.assertEqual(result.monthTrades, 0)
 
     def test_all_accounts_vs_filter(self):
-        us2 = _mk_user_strategy()
+        # Second account for the SAME user (not a different owner -- see
+        # test_other_users_data_hidden_from_days_and_accounts below for the
+        # cross-user boundary, which the non-superuser scoping must enforce).
+        us2 = self._mk_second_broker(self.user)
         self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
         self._close(us2, "0.2", datetime(2026, 7, 10, 10, 0))
 
@@ -1371,6 +1388,45 @@ class PnlCalendarTests(TestCase):
             year=2026, month=7, userBrokerId=self.us.user_broker_id)
         self.assertEqual(result_filtered.monthTrades, 1)
         self.assertAlmostEqual(result_filtered.monthPnlUsd, 50.0)
+
+    def test_other_users_data_hidden_from_days_and_accounts(self):
+        # A second user's own broker + closed position must be invisible to
+        # self.user's (non-superuser) days AND accounts -- mirrors
+        # StrategyManagerState.resolve_managed_strategies's ownership scoping.
+        other_us = _mk_user_strategy()
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(other_us, "0.4", datetime(2026, 7, 10, 10, 0))
+
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(result.monthTrades, 1)
+        self.assertAlmostEqual(result.monthPnlUsd, 50.0)
+        self.assertEqual(len(result.days), 1)
+        self.assertEqual(result.days[0].trades, 1)
+        self.assertAlmostEqual(result.days[0].pnlUsd, 50.0)
+
+        account_ids = {str(a.id) for a in result.accounts}
+        self.assertIn(str(self.us.user_broker_id), account_ids)
+        self.assertNotIn(str(other_us.user_broker_id), account_ids)
+
+    def test_superuser_sees_all_users_data(self):
+        other_us = _mk_user_strategy()
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(other_us, "0.4", datetime(2026, 7, 10, 10, 0))
+
+        admin = User.objects.create(
+            email=f"admin-{uuid.uuid4()}@test.local", first_name="A", last_name="A",
+            is_superuser=True)
+        result = self.PnlCalendar.resolve_pnlCalendar(
+            None, _auth_info(admin), year=2026, month=7)
+
+        self.assertEqual(result.monthTrades, 2)
+        self.assertAlmostEqual(result.monthPnlUsd, 90.0)
+        self.assertEqual(len(result.days), 1)
+        self.assertEqual(result.days[0].trades, 2)
+
+        account_ids = {str(a.id) for a in result.accounts}
+        self.assertIn(str(self.us.user_broker_id), account_ids)
+        self.assertIn(str(other_us.user_broker_id), account_ids)
 
     def test_open_positions_excluded(self):
         _mk_position(self.us, qty=1, avg="3300", realized="0.9",
