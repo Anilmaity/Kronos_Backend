@@ -451,6 +451,45 @@ class ManagerConfig(BaseModel):
         return f"master={self.master_mode} kill=${self.kill_switch_loss_usd} maxpos={self.max_concurrent_positions}"
 
 
+class ManagerBacktestRun(BaseModel):
+    """A queued/completed Strategy Manager historical-audit backtest.
+
+    Job row consumed by the strategies-stack backtest_worker (spec
+    docs/superpowers/specs/2026-07-31-manager-backtest-tab-design.md in
+    KronosStrategies). The worker claims PENDING rows FIFO and writes the
+    result JSON back onto the row.
+    """
+
+    STATUS_CHOICES = [
+        (s, s) for s in ("PENDING", "RUNNING", "DONE", "FAILED", "CANCELLED")
+    ]
+
+    label = models.CharField(max_length=120)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="PENDING")
+    progress_pct = models.FloatField(default=0.0)
+    phase = models.CharField(max_length=20, default="", blank=True)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    params = models.JSONField(default=dict, blank=True)
+    result = models.JSONField(null=True, blank=True)
+    error = models.TextField(default="", blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    requested_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="backtest_runs",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["status", "created_at"],
+                         name="idx_mbrun_status_created"),
+        ]
+
+    def __str__(self):
+        return f"{self.label} [{self.status}] {self.period_start}..{self.period_end}"
+
+
 class ManagerAction(BaseModel):
     """Audit log of every decision the manager loop takes."""
 

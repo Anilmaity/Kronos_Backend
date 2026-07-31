@@ -1139,3 +1139,25 @@ class BrokerNameResolverTests(TestCase):
     def test_none_when_nothing_set(self):
         us = _mk_user_strategy()
         self.assertIsNone(UserStrategyType.resolve_brokerName(us, None))
+
+
+# ---------------------------------------------------------------------------
+# ManagerBacktestRun (2026-07-31 Manager Backtest tab, plan Task 1)
+# ---------------------------------------------------------------------------
+
+class ManagerBacktestRunModelTests(TestCase):
+    def test_manager_backtest_run_defaults(self):
+        from apis.models import ManagerBacktestRun
+
+        run = ManagerBacktestRun.objects.create(
+            label="audit_2026-01-01_2026-07-01",
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 7, 1),
+        )
+        run.refresh_from_db()
+        self.assertEqual(run.status, "PENDING")
+        self.assertEqual(run.progress_pct, 0.0)
+        self.assertEqual(run.params, {})
+        self.assertIsNone(run.result)
+        self.assertEqual(run.error, "")
+        self.assertIsNone(run.requested_by)
