@@ -214,6 +214,11 @@ class Position(BaseModel):
     user_strategy = models.ForeignKey(UserStrategy, on_delete=models.CASCADE)
     currencypair = models.ForeignKey(CurrencyPair, on_delete=models.CASCADE)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["symbol", "quantity"], name="idx_position_symbol_qty"),
+        ]
+
     def __str__(self):
         return str(self.symbol)  + " " + str(self.quantity)
 
@@ -232,6 +237,12 @@ class Order(BaseModel):
     status = models.CharField(max_length=50, default="PENDING")
     reason = models.CharField(max_length=200, default="NONE")
     broker_order_id = models.CharField(max_length=100, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["condition", "created_at"], name="idx_order_condition_created"),
+            models.Index(fields=["broker_order_id"], name="idx_order_broker_order_id"),
+        ]
 
     def __str__(self):
         return str(self.id)
@@ -272,6 +283,11 @@ class Trigger(BaseModel):
     status = models.CharField(max_length=50, default="PENDING", choices=STATUS)
     trail_value = models.DecimalField(default=0.00, max_digits=25, decimal_places=2)
     trail_points = models.DecimalField(default=0.00, max_digits=25, decimal_places=2)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["position", "status"], name="idx_trigger_pos_status"),
+        ]
 
     def __str__(self):
         return str(self.symbol) + " " + str(self.date)
