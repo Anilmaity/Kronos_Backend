@@ -8,7 +8,18 @@ from django.db.models.functions import Coalesce
 from apis.models import Order, Position, UserBroker
 from apis.schema.utils import user_authenticate
 
-_USD_PER_PNL_UNIT = 100.0   # keep in sync with entry_manager / manager
+# Position.realized_profit_loss is stored in PnL units (points x lots), not
+# USD -- convert per-symbol, same as the rest of the platform already does.
+# Peer sites carrying this same conversion (keep them in sync):
+#   strategies/strategy/entry_manager.py ~227
+#   strategy_manager/manager.py ~154
+#   strategies/fill_reconciler.py ~53 (symbol-keyed map -- the pattern here)
+#   strategies/audit_worker/live_deltas.py ~23
+# XAU-only assumption: only XAU_USD has a real factor below. Any other
+# symbol (XAG/BTC contract sizes differ) falls back to the XAU default,
+# which is correct only because the live book is XAU-only today.
+_USD_PER_PNL_UNIT = {"XAU_USD": 100.0}
+_DEFAULT_USD_PER_PNL_UNIT = 100.0
 
 
 class PnlDayType(graphene.ObjectType):
@@ -74,10 +85,12 @@ class PnlCalendar(graphene.ObjectType):
             qs = qs.filter(user_strategy__user_broker_id=userBrokerId)
 
         by_day: dict = {}
-        for realized, exit_at in qs.values_list("realized_profit_loss", "exit_at"):
+        for realized, exit_at, symbol in qs.values_list(
+                "realized_profit_loss", "exit_at", "symbol"):
             d = exit_at.date()   # stored wall clock == IST day (platform quirk)
             agg = by_day.setdefault(d, {"pnl": 0.0, "n": 0})
-            agg["pnl"] += float(realized or 0) * _USD_PER_PNL_UNIT
+            factor = _USD_PER_PNL_UNIT.get(symbol, _DEFAULT_USD_PER_PNL_UNIT)
+            agg["pnl"] += float(realized or 0) * factor
             agg["n"] += 1
 
         days = [PnlDayType(date=d, pnlUsd=round(v["pnl"], 2), trades=v["n"])

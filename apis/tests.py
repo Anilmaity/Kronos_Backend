@@ -1450,3 +1450,36 @@ class PnlCalendarTests(TestCase):
             self._resolve(year=2026, month=13)
         with self.assertRaises(GraphQLError):
             self._resolve(year=2019, month=7)
+
+    def test_symbol_without_factor_falls_back_to_default(self):
+        # _USD_PER_PNL_UNIT only has a real entry for XAU_USD today. A symbol
+        # absent from the map (e.g. XAG_USD) must still convert -- at the
+        # _DEFAULT_USD_PER_PNL_UNIT (100.0) -- documenting today's XAU-only
+        # assumption. When XAG gets its own real contract-size factor, this
+        # test's expected value changes accordingly.
+        xag_us = self._mk_second_broker(self.user, symbol="XAG_USD")
+        self._close(xag_us, "0.5", datetime(2026, 7, 10, 10, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(len(result.days), 1)
+        self.assertAlmostEqual(result.days[0].pnlUsd, 50.0)
+        self.assertAlmostEqual(result.monthPnlUsd, 50.0)
+
+    def test_userBrokerId_for_other_users_broker_returns_empty(self):
+        # A non-superuser passing another user's userBrokerId must not see
+        # that account's days/totals -- the userBrokerId filter is applied
+        # on top of, not instead of, the ownership scope. The requesting
+        # user's own accounts list is still returned (unaffected by the
+        # foreign userBrokerId).
+        other_us = _mk_user_strategy()
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(other_us, "0.4", datetime(2026, 7, 10, 10, 0))
+
+        result = self._resolve(
+            year=2026, month=7, userBrokerId=other_us.user_broker_id)
+        self.assertEqual(result.days, [])
+        self.assertEqual(result.monthTrades, 0)
+        self.assertAlmostEqual(result.monthPnlUsd, 0.0)
+
+        account_ids = {str(a.id) for a in result.accounts}
+        self.assertIn(str(self.us.user_broker_id), account_ids)
+        self.assertNotIn(str(other_us.user_broker_id), account_ids)
