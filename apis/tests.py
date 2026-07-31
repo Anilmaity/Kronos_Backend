@@ -1252,3 +1252,33 @@ class RunManagerBacktestTests(TestCase):
         done = _mk_run(status="DONE")
         res = CancelManagerBacktest.mutate(None, _auth_info(self.user), run_id=done.id)
         self.assertFalse(res.ok)
+
+
+class ManagerBacktestQueryTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            email=f"q-{uuid.uuid4()}@test.local", first_name="Q", last_name="Q")
+
+    def test_runs_list_newest_first(self):
+        from apis.models import ManagerBacktestRun
+        from apis.schema.query.manager_backtest_runs import ManagerBacktestRuns
+        a = _mk_run(label="older")
+        b = _mk_run(label="newer", status="DONE")
+        # auto_now_add stamps both rows in the same instant on SQLite; separate
+        # them explicitly so the -created_at ordering assertion is deterministic.
+        ManagerBacktestRun.objects.filter(id=a.id).update(
+            created_at=timezone.now() - timedelta(minutes=5))
+        rows = ManagerBacktestRuns.resolve_managerBacktestRuns(
+            None, _auth_info(self.user))
+        labels = [r.label for r in rows]
+        self.assertEqual(labels[:2], ["newer", "older"])
+
+    def test_run_detail_roundtrips_result_json(self):
+        from apis.schema.query.manager_backtest_run import ManagerBacktestRun as Q
+        payload = {"summary": {"gated": {"pnl_pts": 12.5}}, "notes": ["n1"]}
+        run = _mk_run(status="DONE", result=payload)
+        got = Q.resolve_managerBacktestRun(None, _auth_info(self.user), runId=run.id)
+        self.assertEqual(got.result, payload)
+        self.assertIsNone(
+            Q.resolve_managerBacktestRun(None, _auth_info(self.user),
+                                         runId=uuid.uuid4()))
