@@ -34,6 +34,7 @@ EXPECTED_QUERY_FIELDS = [
     "managerBacktestRuns",
     "managerConfig",
     "me",
+    "pnlCalendar",
     "regimeHistory",
     "totalCount",
     "user",

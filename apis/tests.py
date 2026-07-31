@@ -19,10 +19,12 @@ from decimal import Decimal
 
 from django.test import TestCase
 from django.utils import timezone
+from graphql import GraphQLError
 
 from apis.models import (
     BacktestReport,
     CurrencyPair,
+    Order,
     Position,
     Strategy,
     StrategySignal,
@@ -1282,3 +1284,113 @@ class ManagerBacktestQueryTests(TestCase):
         self.assertIsNone(
             Q.resolve_managerBacktestRun(None, _auth_info(self.user),
                                          runId=uuid.uuid4()))
+
+
+# ---------------------------------------------------------------------------
+# pnlCalendar query (Reports tab)
+# ---------------------------------------------------------------------------
+
+class PnlCalendarTests(TestCase):
+    def setUp(self):
+        from apis.schema.query.pnl_calendar import PnlCalendar
+        self.PnlCalendar = PnlCalendar
+        self.us = _mk_user_strategy()
+        self.user = self.us.user_broker.user
+
+    def _close(self, us, realized, exit_dt, entry_shift_h=2, with_order=True):
+        """Closed position realized at exit_dt (stored wall clock). The closing
+        Order carries exit_dt; created_at/modified_at are decoys."""
+        pos = _mk_position(us, qty=0, avg="3300", realized=str(realized),
+                           created_at=exit_dt - timedelta(hours=entry_shift_h))
+        if with_order:
+            o = Order.objects.create(symbol="XAU_USD", position=pos,
+                                     condition="EXIT", side="SELL",
+                                     user_broker=us.user_broker)
+            Order.objects.filter(id=o.id).update(created_at=exit_dt)
+        # reconciler-touch decoy: modified_at lands days later
+        Position.objects.filter(id=pos.id).update(
+            modified_at=exit_dt + timedelta(days=3))
+        return pos
+
+    def _resolve(self, **kw):
+        return self.PnlCalendar.resolve_pnlCalendar(None, _auth_info(self.user), **kw)
+
+    def test_day_bucketing_and_usd(self):
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(self.us, "-0.2", datetime(2026, 7, 10, 15, 0))
+        self._close(self.us, "0.1", datetime(2026, 7, 11, 9, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(len(result.days), 2)
+        self.assertEqual(result.days[0].date, date(2026, 7, 10))
+        self.assertAlmostEqual(result.days[0].pnlUsd, 30.0)
+        self.assertEqual(result.days[0].trades, 2)
+        self.assertEqual(result.days[1].date, date(2026, 7, 11))
+        self.assertAlmostEqual(result.days[1].pnlUsd, 10.0)
+        self.assertEqual(result.days[1].trades, 1)
+        self.assertEqual(result.monthTrades, 3)
+
+    def test_exit_order_beats_modified_at(self):
+        # Order.created_at = 07-10 (the real exit day); modified_at is forced
+        # to 07-13 by the reconciler-touch decoy inside _close(). Attribution
+        # must follow the exit Order, not the leaky modified_at.
+        self._close(self.us, "0.3", datetime(2026, 7, 10, 12, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(len(result.days), 1)
+        self.assertEqual(result.days[0].date, date(2026, 7, 10))
+
+    def test_fallback_without_exit_order(self):
+        # No EXIT order -> falls back to modified_at (which _close() sets to
+        # exit_dt + 3 days).
+        self._close(self.us, "0.2", datetime(2026, 7, 10, 12, 0), with_order=False)
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(len(result.days), 1)
+        self.assertEqual(result.days[0].date, date(2026, 7, 13))
+
+    def test_month_window_excludes_neighbors(self):
+        self._close(self.us, "0.4", datetime(2026, 6, 30, 12, 0))
+        self._close(self.us, "0.4", datetime(2026, 8, 1, 12, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(result.days, [])
+        self.assertEqual(result.monthTrades, 0)
+
+    def test_all_accounts_vs_filter(self):
+        us2 = _mk_user_strategy()
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(us2, "0.2", datetime(2026, 7, 10, 10, 0))
+
+        result_all = self._resolve(year=2026, month=7)
+        self.assertEqual(result_all.monthTrades, 2)
+        self.assertAlmostEqual(result_all.monthPnlUsd, 70.0)
+        account_ids = {str(a.id) for a in result_all.accounts}
+        self.assertIn(str(self.us.user_broker_id), account_ids)
+        self.assertIn(str(us2.user_broker_id), account_ids)
+        active_flags = {str(a.id): a.isActive for a in result_all.accounts}
+        self.assertTrue(active_flags[str(self.us.user_broker_id)])
+
+        result_filtered = self._resolve(
+            year=2026, month=7, userBrokerId=self.us.user_broker_id)
+        self.assertEqual(result_filtered.monthTrades, 1)
+        self.assertAlmostEqual(result_filtered.monthPnlUsd, 50.0)
+
+    def test_open_positions_excluded(self):
+        _mk_position(self.us, qty=1, avg="3300", realized="0.9",
+                     created_at=datetime(2026, 7, 10, 10, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(result.days, [])
+        self.assertEqual(result.monthTrades, 0)
+
+    def test_win_loss_days(self):
+        # 07-10 net > 0 (win); 07-11 net < 0 (loss); 07-12 net == 0.0 (neither).
+        self._close(self.us, "0.5", datetime(2026, 7, 10, 10, 0))
+        self._close(self.us, "-0.5", datetime(2026, 7, 11, 10, 0))
+        self._close(self.us, "0.3", datetime(2026, 7, 12, 9, 0))
+        self._close(self.us, "-0.3", datetime(2026, 7, 12, 11, 0))
+        result = self._resolve(year=2026, month=7)
+        self.assertEqual(result.winDays, 1)
+        self.assertEqual(result.lossDays, 1)
+
+    def test_validation(self):
+        with self.assertRaises(GraphQLError):
+            self._resolve(year=2026, month=13)
+        with self.assertRaises(GraphQLError):
+            self._resolve(year=2019, month=7)
