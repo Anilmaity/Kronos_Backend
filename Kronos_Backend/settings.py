@@ -150,27 +150,6 @@ else:
         }
     }
 
-# TimescaleDB tick store (ltp hypertable). Parsed from TIGERDATA_URL.
-# Example: postgres://user:pass@host:port/db?sslmode=require
-_tigerdata_url = os.getenv('TIGERDATA_URL', '').strip()
-if _tigerdata_url:
-    try:
-        from urllib.parse import urlparse, parse_qs
-        _u = urlparse(_tigerdata_url)
-        _qs = parse_qs(_u.query)
-        DATABASES['tsdb'] = {
-            'ENGINE': 'django.db.backends.postgresql_psycopg2',
-            'NAME': (_u.path or '/').lstrip('/') or 'tsdb',
-            'USER': _u.username or '',
-            'PASSWORD': _u.password or '',
-            'HOST': _u.hostname or '',
-            'PORT': str(_u.port or 5432),
-            'OPTIONS': {'sslmode': _qs.get('sslmode', ['require'])[0]},
-        }
-    except Exception:
-        pass
-
-
 
 
 
