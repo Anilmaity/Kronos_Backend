@@ -1,25 +1,69 @@
+"""
+Chart candles, served live from the OANDA REST API (mid prices).
+
+This used to time_bucket the `ltp` hypertable on TigerData TimescaleDB, but
+that service was decommissioned (hostname NXDOMAIN) and the tick collectors
+that fed it no longer exist, so candles now come straight from OANDA —
+mirroring KronosStrategies/strategies/shared/tsdb_reader.py, which is how
+every live runner already gets its bars. A short TTL cache keeps request
+volume low while the chart page polls.
+"""
+
 import logging
+import os
+import re
+import threading
+import time as _time
+from datetime import datetime, timezone
 
 import graphene
-from django.db import connections
+import requests
 from graphql import GraphQLError
 
 logger = logging.getLogger(__name__)
 
-
+# interval -> (OANDA granularity, source bars folded per bucket, bucket seconds)
+# OANDA has no M3 granularity, so 3m is aggregated from M1.
 INTERVAL_MAP = {
-    "5s":  ("5 seconds",  5),
-    "15s": ("15 seconds", 15),
-    "30s": ("30 seconds", 30),
-    "1m":  ("1 minute",   60),
-    "3m":  ("3 minutes",  180),
-    "5m":  ("5 minutes",  300),
-    "15m": ("15 minutes", 900),
-    "30m": ("30 minutes", 1800),
-    "1h":  ("1 hour",     3600),
-    "4h":  ("4 hours",    14400),
-    "1d":  ("1 day",      86400),
+    "5s":  ("S5",  1, 5),
+    "15s": ("S15", 1, 15),
+    "30s": ("S30", 1, 30),
+    "1m":  ("M1",  1, 60),
+    "3m":  ("M1",  3, 180),
+    "5m":  ("M5",  1, 300),
+    "15m": ("M15", 1, 900),
+    "30m": ("M30", 1, 1800),
+    "1h":  ("H1",  1, 3600),
+    "4h":  ("H4",  1, 14400),
+    "1d":  ("D",   1, 86400),
 }
+
+_OANDA_API_KEY = os.getenv("OANDA_API_KEY", "").strip()
+_OANDA_PRACTICE = os.getenv("OANDA_PRACTICE", "true").strip().lower() not in ("false", "0", "no")
+_OANDA_BASE = "https://api-fxpractice.oanda.com/v3" if _OANDA_PRACTICE else "https://api-fxtrade.oanda.com/v3"
+_HTTP_TIMEOUT = int(os.getenv("OANDA_HTTP_TIMEOUT", "15"))
+_MAX_COUNT = 5000  # OANDA hard cap per request
+
+_session = requests.Session()
+_session.headers.update({
+    "Authorization": f"Bearer {_OANDA_API_KEY}",
+    "Accept-Datetime-Format": "RFC3339",
+})
+
+_TTL = float(os.getenv("CANDLES_CACHE_TTL_SEC", "5"))
+_CACHE = {}  # (symbol, interval, limit) -> (fetched_at, [CandleType])
+_CACHE_LOCK = threading.Lock()
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9_]{3,20}$")
+
+
+def _parse_time(rfc3339):
+    # e.g. "2026-08-01T05:00:00.000000000Z" — second precision is enough
+    return int(
+        datetime.strptime(rfc3339[:19], "%Y-%m-%dT%H:%M:%S")
+        .replace(tzinfo=timezone.utc)
+        .timestamp()
+    )
 
 
 class CandleType(graphene.ObjectType):
@@ -28,6 +72,36 @@ class CandleType(graphene.ObjectType):
     high = graphene.Float()
     low = graphene.Float()
     close = graphene.Float()
+
+
+def _fetch_oanda(symbol, granularity, count):
+    resp = _session.get(
+        f"{_OANDA_BASE}/instruments/{symbol}/candles",
+        params={"granularity": granularity, "count": count, "price": "M"},
+        timeout=_HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    out = []
+    for c in resp.json().get("candles", []):
+        mid = c.get("mid") or {}
+        out.append((
+            _parse_time(c["time"]),
+            float(mid["o"]), float(mid["h"]), float(mid["l"]), float(mid["c"]),
+        ))
+    return out
+
+
+def _aggregate(bars, bucket_secs):
+    """Fold (time, o, h, l, c) source bars into bucket_secs-aligned buckets."""
+    buckets = []
+    for t, o, h, low, c in bars:
+        b = t - (t % bucket_secs)
+        if buckets and buckets[-1][0] == b:
+            prev = buckets[-1]
+            buckets[-1] = (b, prev[1], max(prev[2], h), min(prev[3], low), c)
+        else:
+            buckets.append((b, o, h, low, c))
+    return buckets
 
 
 class GetCandles(graphene.ObjectType):
@@ -43,44 +117,34 @@ class GetCandles(graphene.ObjectType):
             raise GraphQLError(
                 f"Unknown interval '{interval}'. Valid: {list(INTERVAL_MAP)}"
             )
-        tsdb_alias = "tsdb" if "tsdb" in connections.databases else "default"
+        if not _SYMBOL_RE.match(symbol or ""):
+            raise GraphQLError(f"Invalid symbol '{symbol}'")
 
-        bucket_sql, bucket_secs = INTERVAL_MAP[interval]
-        limit = max(1, min(int(limit), 5000))
-        history_secs = bucket_secs * limit * 3
+        granularity, fold, bucket_secs = INTERVAL_MAP[interval]
+        limit = max(1, min(int(limit), _MAX_COUNT))
 
-        sql = """
-            SELECT bucket, open, high, low, close FROM (
-                SELECT time_bucket(%s::interval, time) AS bucket,
-                       first(ltp::float8, time) AS open,
-                       max(ltp::float8)         AS high,
-                       min(ltp::float8)         AS low,
-                       last(ltp::float8, time)  AS close
-                FROM   ltp
-                WHERE  symbol = %s
-                  AND  time  >= NOW() - (%s || ' seconds')::interval
-                GROUP BY bucket
-                ORDER  BY bucket DESC
-                LIMIT  %s
-            ) sub
-            ORDER BY bucket ASC;
-        """
+        key = (symbol, interval, limit)
+        now = _time.monotonic()
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
+            if hit and now - hit[0] < _TTL:
+                return hit[1]
 
+        count = min(limit * fold, _MAX_COUNT)
         try:
-            with connections[tsdb_alias].cursor() as cur:
-                cur.execute(sql, [bucket_sql, symbol, history_secs, limit])
-                rows = cur.fetchall()
+            bars = _fetch_oanda(symbol, granularity, count)
         except Exception as exc:
             logger.exception("candles query failed (symbol=%s interval=%s)", symbol, interval)
             raise GraphQLError(f"candles query failed: {exc}")
 
-        return [
-            CandleType(
-                time=int(r[0].timestamp()),
-                open=float(r[1]),
-                high=float(r[2]),
-                low=float(r[3]),
-                close=float(r[4]),
-            )
-            for r in rows
+        if fold > 1:
+            bars = _aggregate(bars, bucket_secs)
+        bars = bars[-limit:]
+
+        result = [
+            CandleType(time=t, open=o, high=h, low=low, close=c)
+            for t, o, h, low, c in bars
         ]
+        with _CACHE_LOCK:
+            _CACHE[key] = (now, result)
+        return result
