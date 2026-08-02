@@ -14,6 +14,7 @@ from apis.schema import schema
 
 EXPECTED_QUERY_FIELDS = [
     "_debug",
+    "accountAnalytics",
     "allBacktestReport",
     "allCurrencyPair",
     "allIndicator",
