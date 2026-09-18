@@ -16,6 +16,22 @@ contract size (1 XAU lot = 100 oz) converts to account currency at the edge.
 CONTRACT_SIZE = 100  # XAUUSD: 1 lot = 100 oz. Move onto CurrencyPair for non-gold.
 
 
+def mark_price(position_ltp, pair_ltp) -> float:
+    """The price an open position is marked at.
+
+    Every writer (position_monitor for XAU_USD, the Telegram copy-trader for
+    XAUUSD) refreshes Position.ltp on each tick, so it is the authoritative mark.
+    CurrencyPair.ltp is a mirror that only position_monitor maintains, and only
+    for its own symbol — the XAUUSD pair sat at 0.00 for months, which priced
+    every open copy-trader short at (entry - 0) x lots x contract. Use the pair's
+    ltp only for a row that never received a mark of its own.
+    """
+    pos = float(position_ltp or 0)
+    if pos > 0:
+        return pos
+    return float(pair_ltp or 0)
+
+
 def _unrealized(ltp: float, quantity: float, avg_buy_price: float,
                 avg_sell_price: float) -> float:
     """Directional unrealized PnL in price-x-lots units (0 for a flat position)."""

@@ -7,7 +7,7 @@ from graphene_django import DjangoObjectType
 from apis.models import (Position)
 from apis.schema.types.order_type import OrderType
 from apis.schema.types.trigger_type import TriggerType
-from apis.schema.types.pnl import position_pnl, position_notional, position_pnl_pct
+from apis.schema.types.pnl import position_pnl, position_notional, position_pnl_pct, mark_price
 
 
 ##############################################################################################################################################################
@@ -28,7 +28,7 @@ class PositionType(DjangoObjectType):
         exclude = ("order_set", "trigger_set", "user_strategy")
 
     def resolve_ltp(self, info):
-        return self.currencypair.ltp
+        return mark_price(self.ltp, self.currencypair.ltp)
 
 
     def resolve_totalValue(self, info):
@@ -39,11 +39,11 @@ class PositionType(DjangoObjectType):
     def resolve_profit_loss(self, info):
         # Directional realized + unrealized PnL. The old long-only formula priced a
         # short against avg_buy_price == 0, inflating PnL to ~ the entry price ("4K").
-        return position_pnl(self.realized_profit_loss, self.currencypair.ltp,
+        return position_pnl(self.realized_profit_loss, mark_price(self.ltp, self.currencypair.ltp),
                             self.quantity, self.avg_buy_price, self.avg_sell_price)
 
     def resolve_profit_loss_percentage(self, info):
-        return position_pnl_pct(self.realized_profit_loss, self.currencypair.ltp,
+        return position_pnl_pct(self.realized_profit_loss, mark_price(self.ltp, self.currencypair.ltp),
                                 self.quantity, self.avg_buy_price, self.avg_sell_price)
 
 

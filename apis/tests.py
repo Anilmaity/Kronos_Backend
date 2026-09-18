@@ -236,6 +236,44 @@ class ContractSizeScalingTests(TestCase):
         )
 
 
+class MarkPriceSourceTests(TestCase):
+    """2026-09-18 dashboard bug: the Telegram copy-trader writes its positions on
+    the `XAUUSD` CurrencyPair, whose `ltp` nothing maintains (position_monitor
+    mirrors the live price only into `XAU_USD`). Marking open positions against
+    CurrencyPair.ltp == 0 turned every open 0.03-lot short into +$13,163 of
+    unrealized "profit" (entry price x lots x contract). Both writers keep
+    Position.ltp fresh on every tick, so that is the mark price; the pair's ltp
+    is only a fallback for a row that never received one."""
+
+    def _short(self, us, *, qty, avg_sell, pos_ltp):
+        cp = us.strategy.currencypair
+        return Position.objects.create(
+            user_strategy=us, currencypair=cp, symbol=cp.symbol,
+            quantity=Decimal(qty), avg_sell_price=Decimal(avg_sell),
+            ltp=Decimal(pos_ltp),
+        )
+
+    def test_open_short_on_stale_pair_uses_position_ltp(self):
+        us = _mk_user_strategy(symbol="XAUUSD", ltp="0.00")
+        # the row as the Telegram bot leaves it: short 0.03 @ 4387.65, marked 4386.32
+        pos = self._short(us, qty="0.03", avg_sell="4387.65", pos_ltp="4386.32")
+
+        # (4387.65 - 4386.32) * 0.03 * 100 = $3.99 — not $13,162.95
+        self.assertAlmostEqual(PositionType.resolve_profit_loss(pos, info=None), 3.99, places=2)
+        self.assertAlmostEqual(PositionType.resolve_ltp(pos, info=None), 4386.32, places=2)
+        self.assertAlmostEqual(
+            UserStrategyType.resolve_total_profit_loss(us, info=None, date="", userstrategy_ids=[]),
+            3.99, places=2,
+        )
+
+    def test_falls_back_to_pair_ltp_when_position_has_none(self):
+        us = _mk_user_strategy(symbol="XAU_USD", ltp="4502.00")
+        pos = self._short(us, qty="0.01", avg_sell="4500.00", pos_ltp="0.00")
+        # (4500 - 4502) * 0.01 * 100 = -$2.00 from the pair's price
+        self.assertAlmostEqual(PositionType.resolve_profit_loss(pos, info=None), -2.00, places=2)
+        self.assertAlmostEqual(PositionType.resolve_ltp(pos, info=None), 4502.00, places=2)
+
+
 class StrategySignalModelTests(TestCase):
     def test_create_fired_and_transition_to_placed(self):
         us = _mk_user_strategy()

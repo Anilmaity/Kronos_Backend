@@ -8,7 +8,7 @@ from django.db.models import Q
 from apis.constants import today_ist
 from apis.models import (UserStrategy)
 from apis.schema.types.position_type import PositionType
-from apis.schema.types.pnl import position_pnl
+from apis.schema.types.pnl import position_pnl, mark_price
 
 
 def _positions_qs(self, date, userstrategy_ids):
@@ -59,10 +59,11 @@ class UserStrategyType(DjangoObjectType):
         # Sum the SAME per-position formula used by PositionType.resolve_profit_loss
         # (apis.schema.types.pnl.position_pnl) so the strategy total agrees with the
         # row-level numbers and is directional — a short is no longer priced against
-        # avg_buy_price == 0 (the "4K" inflation bug).
+        # avg_buy_price == 0 (the "4K" inflation bug). Marked at Position.ltp, not
+        # the pair mirror, which is only maintained for XAU_USD (see pnl.mark_price).
         positions = _positions_qs(self, date, userstrategy_ids)
         return sum(
-            position_pnl(p.realized_profit_loss, p.currencypair.ltp,
+            position_pnl(p.realized_profit_loss, mark_price(p.ltp, p.currencypair.ltp),
                          p.quantity, p.avg_buy_price, p.avg_sell_price)
             for p in positions
         )
